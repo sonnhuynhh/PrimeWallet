@@ -7,9 +7,12 @@ import com.sonnhuynhh.primewallet.wallet.enums.EntryType;
 import com.sonnhuynhh.primewallet.wallet.repository.AccountRepository;
 import com.sonnhuynhh.primewallet.wallet.repository.LedgerEntryRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 
 /**
  * Service ghi nhận bút toán vào sổ cái (Ledger).
@@ -27,10 +30,26 @@ import java.math.BigDecimal;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class LedgerService {
 
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountRepository accountRepository;
+    private final RedisTemplate<String, String> redisTemplate;
+
+    /**
+     * Prefix cho Redis key.
+     * Key format: "account:balance:550e8400-..."
+     * Dùng prefix để dễ tìm và xóa hàng loạt khi cần.
+     */
+    private static final String BALANCE_CACHE_PREFIX = "account:balance:";
+
+    /**
+     * Thời gian cache sống (TTL = Time To Live).
+     * Sau 30 phút không cập nhật → cache tự hết hạn → lần đọc tiếp query DB.
+     * Tại sao 30 phút? → Cân bằng giữa hiệu năng và tính mới của dữ liệu.
+     */
+    private static final Duration CACHE_TTL = Duration.ofMinutes(30);
 
     /**
      * Ghi bút toán DEBIT — Trừ tiền khỏi tài khoản.
@@ -52,7 +71,10 @@ public class LedgerService {
         account.setBalance(newBalance);
         accountRepository.save(account);
 
-        // 3. Tạo bút toán DEBIT trong sổ cái
+        // 3. Cập nhật Redis cache (write-through)
+        updateBalanceCache(account.getId().toString(), newBalance);
+
+        // 4. Tạo bút toán DEBIT trong sổ cái
         LedgerEntry entry = LedgerEntry.builder()
                 .transaction(transaction)
                 .account(account)
@@ -84,7 +106,10 @@ public class LedgerService {
         account.setBalance(newBalance);
         accountRepository.save(account);
 
-        // 3. Tạo bút toán CREDIT trong sổ cái
+        // 3. Cập nhật Redis cache (write-through)
+        updateBalanceCache(account.getId().toString(), newBalance);
+
+        // 4. Tạo bút toán CREDIT trong sổ cái
         LedgerEntry entry = LedgerEntry.builder()
                 .transaction(transaction)
                 .account(account)
@@ -94,5 +119,30 @@ public class LedgerService {
                 .build();
 
         return ledgerEntryRepository.save(entry);
+    }
+
+    // ==================== REDIS CACHE ====================
+
+    /**
+     * Cập nhật số dư trong Redis cache (Write-Through Pattern).
+     *
+     * Write-Through nghĩa là: Mỗi khi GHI DB → GHI REDIS luôn.
+     * → Cache luôn đồng bộ với DB.
+     * → Không lo cache trả về dữ liệu cũ (stale data).
+     *
+     * Nếu Redis lỗi → CHỈ LOG warning, KHÔNG throw exception.
+     * Vì: Cache là bộ nhớ tạm, nếu mất → lần đọc tiếp sẽ query DB và cache lại.
+     * Giao dịch tài chính KHÔNG BAO GIỜ phụ thuộc vào cache.
+     */
+    private void updateBalanceCache(String accountId, BigDecimal newBalance) {
+        try {
+            String key = BALANCE_CACHE_PREFIX + accountId;
+            redisTemplate.opsForValue().set(key, newBalance.toPlainString(), CACHE_TTL);
+            log.debug("Redis cache updated: {} = {}", key, newBalance.toPlainString());
+        } catch (Exception e) {
+            // Redis lỗi → chỉ log, không ảnh hưởng giao dịch
+            log.warn("Không thể cập nhật Redis cache cho account {}: {}",
+                    accountId, e.getMessage());
+        }
     }
 }

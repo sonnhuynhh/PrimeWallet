@@ -41,8 +41,8 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, UUID> 
      * - TRỪ SUM tất cả DEBIT (tiền ra) của tài khoản
      * - COALESCE: Trả về 0 nếu chưa có giao dịch nào (tránh NULL).
      */
-    @Query("SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE BigDecimal.ZERO END), BigDecimal.ZERO) - " +
-           "COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE BigDecimal.ZERO END), BigDecimal.ZERO) " +
+    @Query("SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END), 0) - " +
+           "COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END), 0) " +
            "FROM LedgerEntry le WHERE le.account.id = :accountId")
     BigDecimal calculateBalanceByAccountId(UUID accountId);
 }

@@ -1,0 +1,85 @@
+# =============================================
+# Docker Compose cho PrimeWallet
+# Chạy: docker compose up -d
+# Tắt:  docker compose down
+# =============================================
+# File này định nghĩa 3 service hạ tầng:
+# 1. Zookeeper: Bộ điều phối cho Kafka (Kafka không chạy được nếu thiếu)
+# 2. Kafka: Message broker — trung tâm truyền sự kiện
+# 3. Redis: Cache — lưu tạm số dư ví để đọc nhanh
+
+services:
+
+  # ==================== ZOOKEEPER ====================
+  # Zookeeper là "người quản lý" của Kafka cluster.
+  # Kafka cần Zookeeper để:
+  # - Biết có bao nhiêu Kafka broker đang chạy
+  # - Quản lý metadata của các topic
+  # - Bầu leader cho các partition
+  #
+  # Lưu ý: Kafka đang dần bỏ Zookeeper (KRaft mode), nhưng
+  # phiên bản stable hiện tại vẫn cần Zookeeper.
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.9.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"           # Port mặc định của Zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181          # Port client kết nối
+      ZOOKEEPER_TICK_TIME: 2000            # Heartbeat interval (ms)
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data    # Persist data khi restart
+
+  # ==================== KAFKA ====================
+  # Kafka là Message Broker — "bưu điện" chuyển sự kiện.
+  #
+  # Khi TransactionService gửi event "Giao dịch thành công",
+  # Kafka nhận và chuyển event đó đến TẤT CẢ consumer đang lắng nghe
+  # (Notification, Cache updater, AI fraud detection, ...)
+  #
+  # Tại sao dùng Kafka thay vì RabbitMQ?
+  # - Kafka lưu message trên disk → không mất dữ liệu nếu consumer chết
+  # - Kafka xử lý hàng triệu message/giây (RabbitMQ chỉ vài chục nghìn)
+  # - Kafka cho phép replay message (đọc lại event cũ) — rất hữu ích cho debug
+  kafka:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: kafka
+    depends_on:
+      - zookeeper              # Phải chờ Zookeeper chạy trước
+    ports:
+      - "9092:9092"            # Port cho app Spring Boot kết nối
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181     # Kết nối đến Zookeeper
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092   # Địa chỉ Kafka public
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1   # Chỉ 1 broker → replication = 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"    # Tắt auto-create topic (ta tạo thủ công qua code)
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # ==================== REDIS ====================
+  # Redis là In-Memory Cache — "bộ nhớ tạm siêu nhanh".
+  #
+  # Thay vì mỗi lần xem số dư phải query PostgreSQL:
+  #   SELECT balance FROM accounts WHERE id = ?    ← ~5-10ms
+  #
+  # Ta đọc từ Redis:
+  #   GET account:balance:{id}                     ← ~0.1ms (nhanh gấp 50-100 lần)
+  #
+  # Dữ liệu trong Redis có TTL (thời gian sống), tự hết hạn sau N phút.
+  # Nếu cache miss → query DB → cache lại.
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+# ==================== VOLUMES ====================
+# Docker Volumes giữ dữ liệu khi container restart.
+# Không dùng volume → mỗi lần restart, Kafka mất hết topic, Redis mất hết cache.
+volumes:
+  zookeeper_data:
+  kafka_data:
+  redis_data:

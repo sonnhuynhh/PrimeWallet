@@ -9,9 +9,12 @@ import com.sonnhuynhh.primewallet.wallet.entity.Account;
 import com.sonnhuynhh.primewallet.wallet.enums.AccountStatus;
 import com.sonnhuynhh.primewallet.wallet.repository.AccountRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -26,11 +29,15 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AccountService {
 
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
     private final ReferenceNumberGenerator referenceNumberGenerator;
+    private final RedisTemplate<String, String> redisTemplate;
+
+    private static final String BALANCE_CACHE_PREFIX = "account:balance:";
 
     // ==================== TẠO VÍ ====================
 
@@ -104,14 +111,39 @@ public class AccountService {
 
     /**
      * Chuyển Entity → Response DTO.
-     * Tách riêng method để tái sử dụng.
+     *
+     * Chiến lược đọc số dư (Cache-Aside Pattern):
+     * 1. Kiểm tra Redis có key "account:balance:{id}" không
+     * 2. Nếu CÓ (Cache Hit) → dùng số dư từ Redis (~0.1ms)
+     * 3. Nếu KHÔNG (Cache Miss) → dùng số dư từ DB entity (~5-10ms)
+     *
+     * Khi nào cache miss?
+     * - Lần đầu tiên truy vấn sau khi tạo ví
+     * - Cache hết hạn (TTL 30 phút)
+     * - Redis bị restart
      */
     private AccountResponse toResponse(Account account) {
+        BigDecimal balance = account.getBalance();
+
+        // Thử đọc số dư từ Redis cache
+        try {
+            String cachedBalance = redisTemplate.opsForValue()
+                    .get(BALANCE_CACHE_PREFIX + account.getId().toString());
+            if (cachedBalance != null) {
+                balance = new BigDecimal(cachedBalance);
+                log.debug("Balance đọc từ Redis cache: {} = {}",
+                        account.getAccountNumber(), cachedBalance);
+            }
+        } catch (Exception e) {
+            // Redis lỗi → dùng balance từ DB (fallback an toàn)
+            log.warn("Không thể đọc Redis cache, dùng DB balance: {}", e.getMessage());
+        }
+
         return AccountResponse.builder()
                 .id(account.getId())
                 .accountNumber(account.getAccountNumber())
                 .currency(account.getCurrency())
-                .balance(account.getBalance())
+                .balance(balance)
                 .status(account.getStatus().name())
                 .accountType(account.getAccountType())
                 .createdAt(account.getCreatedAt())

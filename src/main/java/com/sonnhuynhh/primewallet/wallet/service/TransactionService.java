@@ -5,6 +5,8 @@ import com.sonnhuynhh.primewallet.common.exception.InsufficientBalanceException;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
 import com.sonnhuynhh.primewallet.common.util.ReferenceNumberGenerator;
 import com.sonnhuynhh.primewallet.wallet.dto.*;
+import com.sonnhuynhh.primewallet.wallet.event.TransactionEvent;
+import com.sonnhuynhh.primewallet.wallet.event.TransactionEventPublisher;
 import com.sonnhuynhh.primewallet.wallet.entity.Account;
 import com.sonnhuynhh.primewallet.wallet.entity.Transaction;
 import com.sonnhuynhh.primewallet.wallet.enums.AccountStatus;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -50,6 +53,7 @@ public class TransactionService {
     private final AccountRepository accountRepository;
     private final LedgerService ledgerService;
     private final ReferenceNumberGenerator referenceNumberGenerator;
+    private final TransactionEventPublisher eventPublisher;
 
     // ==================== NẠP TIỀN (TOP UP) ====================
 
@@ -102,6 +106,9 @@ public class TransactionService {
         // 6. Cập nhật trạng thái giao dịch
         transaction.setStatus(TransactionStatus.SUCCESS);
         transaction = transactionRepository.save(transaction);
+
+        // 7. Phát event lên Kafka — các consumer sẽ xử lý thông báo, cache, ...
+        eventPublisher.publish(buildEvent(transaction));
 
         log.info("Nạp tiền thành công: {} VNĐ vào ví {}", request.getAmount(), account.getAccountNumber());
         return toResponse(transaction);
@@ -167,6 +174,9 @@ public class TransactionService {
         // 8. Cập nhật trạng thái
         transaction.setStatus(TransactionStatus.SUCCESS);
         transaction = transactionRepository.save(transaction);
+
+        // 9. Phát event lên Kafka
+        eventPublisher.publish(buildEvent(transaction));
 
         log.info("Rút tiền thành công: {} VNĐ từ ví {}", request.getAmount(), account.getAccountNumber());
         return toResponse(transaction);
@@ -252,6 +262,9 @@ public class TransactionService {
         transaction.setStatus(TransactionStatus.SUCCESS);
         transaction = transactionRepository.save(transaction);
 
+        // 9. Phát event lên Kafka
+        eventPublisher.publish(buildEvent(transaction));
+
         log.info("Chuyển tiền thành công: {} VNĐ từ {} → {}",
                 request.getAmount(), sourceAccount.getAccountNumber(), destAccount.getAccountNumber());
         return toResponse(transaction);
@@ -268,7 +281,34 @@ public class TransactionService {
                 .map(this::toResponse);
     }
 
-    // ==================== HELPER METHODS ====================
+    /**
+     * Chuyển Transaction entity → TransactionEvent (Kafka DTO).
+     *
+     * Tại sao cần method riêng?
+     * - Tránh lặp code ở 3 nơi (topUp, withdraw, transfer)
+     * - Đảm bảo mọi event có cùng format
+     * - Dễ thêm trường mới sau này (VD: userId, deviceInfo)
+     */
+    private TransactionEvent buildEvent(Transaction transaction) {
+        return TransactionEvent.builder()
+                .transactionId(transaction.getId())
+                .referenceNumber(transaction.getReferenceNumber())
+                .transactionType(transaction.getTransactionType().name())
+                .sourceAccountNumber(
+                        transaction.getSourceAccount() != null
+                                ? transaction.getSourceAccount().getAccountNumber()
+                                : null)
+                .destinationAccountNumber(
+                        transaction.getDestinationAccount() != null
+                                ? transaction.getDestinationAccount().getAccountNumber()
+                                : null)
+                .amount(transaction.getAmount())
+                .currency(transaction.getCurrency())
+                .status(transaction.getStatus().name())
+                .description(transaction.getDescription())
+                .timestamp(LocalDateTime.now().toString())
+                .build();
+    }
 
     /**
      * Kiểm tra ví có đang ACTIVE không.
