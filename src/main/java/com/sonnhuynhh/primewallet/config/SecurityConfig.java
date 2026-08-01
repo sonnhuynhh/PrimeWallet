@@ -48,12 +48,18 @@ public class SecurityConfig {
                 // 2. Cấu hình quyền truy cập API
                 .authorizeHttpRequests(auth -> auth
                         // API công khai — Ai cũng truy cập được
-                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        // CHỈ cho phép 3 endpoint cụ thể (register, login, refresh)
+                        // KHÔNG dùng /auth/** nữa vì /auth/profile cần bảo vệ!
+                        .requestMatchers(
+                                "/api/v1/auth/register",
+                                "/api/v1/auth/login",
+                                "/api/v1/auth/refresh"
+                        ).permitAll()
 
                         // API dành riêng cho ADMIN
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
 
-                        // Tất cả API còn lại — Phải đăng nhập (có JWT)
+                        // Tất cả API còn lại (bao gồm /auth/profile) — Phải đăng nhập (có JWT)
                         .anyRequest().authenticated()
                 )
 

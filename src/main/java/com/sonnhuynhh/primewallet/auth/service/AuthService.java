@@ -139,6 +139,112 @@ public class AuthService {
         return generateAuthResponse(user);
     }
 
+    // ==================== PROFILE ====================
+
+    /**
+     * Lấy thông tin profile của user hiện tại.
+     *
+     * Tại sao cần method riêng thay vì trả thẳng User entity?
+     * → Entity User chứa passwordHash — nếu trả thẳng qua API,
+     *   Jackson sẽ serialize CẢ passwordHash ra JSON → lộ mật khẩu mã hóa.
+     * → Dùng DTO (UserProfileResponse) để kiểm soát chính xác những gì client nhận được.
+     *
+     * Đây gọi là pattern "Entity → DTO Mapping", rất phổ biến trong Spring Boot.
+     */
+    public UserProfileResponse getProfile(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+
+        // Map từ Entity → DTO (chỉ lấy những trường an toàn)
+        return UserProfileResponse.builder()
+                .email(user.getEmail())
+                .phone(user.getPhone())
+                .fullName(user.getFullName())
+                .dateOfBirth(user.getDateOfBirth())
+                .kycStatus(user.getKycStatus())
+                .status(user.getStatus())
+                .createdAt(user.getCreatedAt())
+                .build();
+    }
+
+    /**
+     * Cập nhật thông tin profile (fullName, dateOfBirth).
+     *
+     * Tại sao dùng @Transactional?
+     * → Đảm bảo nếu có lỗi giữa chừng (ví dụ DB timeout),
+     *   toàn bộ thay đổi sẽ rollback, không để dữ liệu "nửa nạc nửa mỡ".
+     *
+     * Tại sao chỉ cho sửa fullName và dateOfBirth?
+     * → email/phone là thông tin định danh → đổi cần OTP verify (phase sau).
+     * → password đổi qua API riêng (changePassword) ở Bước 2.
+     */
+    @Transactional
+    public UserProfileResponse updateProfile(UUID userId, UpdateProfileRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+
+        // Cập nhật các trường được phép thay đổi
+        user.setFullName(request.getFullName());
+        user.setDateOfBirth(request.getDateOfBirth());
+
+        // save() sẽ UPDATE vì entity đã có ID
+        user = userRepository.save(user);
+
+        // Trả về profile đã cập nhật
+        return UserProfileResponse.builder()
+                .email(user.getEmail())
+                .phone(user.getPhone())
+                .fullName(user.getFullName())
+                .dateOfBirth(user.getDateOfBirth())
+                .kycStatus(user.getKycStatus())
+                .status(user.getStatus())
+                .createdAt(user.getCreatedAt())
+                .build();
+    }
+
+    // ==================== ĐỔI MẬT KHẨU ====================
+
+    /**
+     * Đổi mật khẩu cho user.
+     *
+     * Quy trình bảo mật 3 bước:
+     * 1. Xác thực mật khẩu hiện tại (chống trường hợp ai đó lấy được token)
+     * 2. Kiểm tra newPassword == confirmNewPassword (chống gõ nhầm)
+     * 3. Mã hóa mật khẩu mới bằng BCrypt rồi lưu vào DB
+     *
+     * Tại sao kiểm tra currentPassword dù user đã có JWT?
+     * → JWT có thể bị đánh cắp (XSS, mượn điện thoại, v.v.)
+     * → Yêu cầu nhập lại mật khẩu cũ là lớp bảo vệ bổ sung
+     *   (giống như ngân hàng yêu cầu nhập mã PIN khi chuyển tiền
+     *    dù bạn đã đăng nhập rồi).
+     */
+    @Transactional
+    public void changePassword(UUID userId, ChangePasswordRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+
+        // Bước 1: Kiểm tra mật khẩu hiện tại có đúng không
+        // passwordEncoder.matches(rawPassword, encodedPassword)
+        // → So sánh mật khẩu thô (user nhập) với hash BCrypt trong DB
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+            throw new IllegalArgumentException("Mật khẩu hiện tại không đúng");
+        }
+
+        // Bước 2: Kiểm tra mật khẩu mới == xác nhận mật khẩu mới
+        if (!request.getNewPassword().equals(request.getConfirmNewPassword())) {
+            throw new IllegalArgumentException("Mật khẩu mới và xác nhận mật khẩu không khớp");
+        }
+
+        // Bước 3: Kiểm tra mật khẩu mới không trùng mật khẩu cũ
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPasswordHash())) {
+            throw new IllegalArgumentException("Mật khẩu mới không được trùng mật khẩu hiện tại");
+        }
+
+        // Bước 4: Mã hóa và lưu mật khẩu mới
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+    }
+
     // ==================== HELPER METHODS ====================
 
     /**
