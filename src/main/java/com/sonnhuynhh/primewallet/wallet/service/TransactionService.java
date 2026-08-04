@@ -1,8 +1,9 @@
 package com.sonnhuynhh.primewallet.wallet.service;
 
-import com.sonnhuynhh.primewallet.common.exception.DuplicateTransactionException;
-import com.sonnhuynhh.primewallet.common.exception.InsufficientBalanceException;
-import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
+import com.sonnhuynhh.primewallet.auth.entity.KycStatus;
+import com.sonnhuynhh.primewallet.auth.entity.User;
+import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
+import com.sonnhuynhh.primewallet.common.exception.*;
 import com.sonnhuynhh.primewallet.common.util.ReferenceNumberGenerator;
 import com.sonnhuynhh.primewallet.wallet.dto.*;
 import com.sonnhuynhh.primewallet.wallet.event.TransactionEvent;
@@ -51,9 +52,16 @@ public class TransactionService {
 
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
+    private final UserRepository userRepository;
     private final LedgerService ledgerService;
     private final ReferenceNumberGenerator referenceNumberGenerator;
     private final TransactionEventPublisher eventPublisher;
+
+    /**
+     * Ngưỡng giao dịch yêu cầu KYC: 10 triệu VNĐ.
+     * Giao dịch > ngưỡng này mà user chưa KYC → bị từ chối.
+     */
+    private static final BigDecimal KYC_THRESHOLD = new BigDecimal("10000000");
 
     // ==================== NẠP TIỀN (TOP UP) ====================
 
@@ -79,12 +87,15 @@ public class TransactionService {
             return toResponse(existing.get());
         }
 
-        // 2. Lấy ví chính của user
+        // 2. Kiểm tra user có bị khóa hoặc cần KYC không
+        validateUserForTransaction(userId, request.getAmount());
+
+        // 3. Lấy ví chính của user
         Account account = accountRepository
                 .findByUserIdAndCurrencyAndAccountType(userId, "VND", "PRIMARY")
                 .orElseThrow(() -> new ResourceNotFoundException("Chưa có ví. Vui lòng tạo ví trước."));
 
-        // 3. Kiểm tra ví có đang hoạt động không
+        // 4. Kiểm tra ví có đang hoạt động không
         validateAccountActive(account);
 
         // 4. Tạo Transaction (TOPUP)
@@ -136,16 +147,19 @@ public class TransactionService {
             return toResponse(existing.get());
         }
 
-        // 2. Lấy ví chính của user
+        // 2. Kiểm tra user có bị khóa hoặc cần KYC không
+        validateUserForTransaction(userId, request.getAmount());
+
+        // 3. Lấy ví chính của user
         Account account = accountRepository
                 .findByUserIdAndCurrencyAndAccountType(userId, "VND", "PRIMARY")
                 .orElseThrow(() -> new ResourceNotFoundException("Chưa có ví. Vui lòng tạo ví trước."));
 
-        // 3. Khóa ví (Pessimistic Lock) — đảm bảo không ai khác đang trừ tiền đồng thời
+        // 4. Khóa ví (Pessimistic Lock) — đảm bảo không ai khác đang trừ tiền đồng thời
         account = accountRepository.findByIdWithLock(account.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví"));
 
-        // 4. Kiểm tra trạng thái ví
+        // 5. Kiểm tra trạng thái ví
         validateAccountActive(account);
 
         // 5. Kiểm tra số dư
@@ -210,6 +224,9 @@ public class TransactionService {
             log.warn("Giao dịch trùng lặp với idempotency key: {}", request.getIdempotencyKey());
             return toResponse(existing.get());
         }
+
+        // 2. Kiểm tra user có bị khóa hoặc cần KYC không
+        validateUserForTransaction(userId, request.getAmount());
 
         // 2. Lấy ví gửi (ví chính VNĐ của user hiện tại)
         Account sourceAccount = accountRepository
@@ -318,6 +335,41 @@ public class TransactionService {
             throw new IllegalStateException(
                     String.format("Ví %s đang ở trạng thái %s, không thể giao dịch",
                             account.getAccountNumber(), account.getStatus()));
+        }
+    }
+
+    /**
+     * Kiểm tra user có đủ điều kiện thực hiện giao dịch không.
+     *
+     * 2 kiểm tra:
+     * 1. User bị LOCKED → chặn MỌI giao dịch (bất kể số tiền)
+     * 2. User chưa KYC + giao dịch > 10 triệu VNĐ → chặn
+     *
+     * Tại sao kiểm tra ở tầng User thay vì tầng Account?
+     * → Account (ví) chỉ biết trạng thái ví (ACTIVE/CLOSED).
+     * → KYC là thông tin của User (người sở hữu ví).
+     * → Một user có thể có nhiều ví, nhưng KYC chỉ cần xác thực 1 lần.
+     *
+     * Tại sao đặt ngưỡng 10 triệu VNĐ?
+     * → Theo quy định pháp luật Việt Nam, giao dịch trên một ngưỡng nhất định
+     *   yêu cầu xác thực danh tính (KYC) để phòng chống rửa tiền (AML).
+     * → 10 triệu là ngưỡng phổ biến cho ví điện tử.
+     */
+    private void validateUserForTransaction(UUID userId, BigDecimal amount) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+
+        // Kiểm tra 1: Tài khoản bị khóa → chặn mọi giao dịch
+        if ("LOCKED".equals(user.getStatus())) {
+            throw new AccountLockedException(
+                    "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ hỗ trợ.");
+        }
+
+        // Kiểm tra 2: Chưa KYC + giao dịch lớn → yêu cầu KYC
+        if (user.getKycStatus() != KycStatus.VERIFIED && amount.compareTo(KYC_THRESHOLD) > 0) {
+            throw new KycRequiredException(
+                    String.format("Giao dịch trên %s VNĐ yêu cầu xác thực danh tính (KYC). "
+                            + "Vui lòng hoàn tất KYC trước khi thực hiện.", KYC_THRESHOLD.toPlainString()));
         }
     }
 

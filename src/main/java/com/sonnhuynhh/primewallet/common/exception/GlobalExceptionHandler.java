@@ -55,6 +55,28 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
+    /**
+     * Xử lý khi user chưa KYC nhưng cố giao dịch lớn.
+     * HTTP 403 Forbidden — user đã đăng nhập nhưng bị CẤM do chưa đủ điều kiện.
+     */
+    @ExceptionHandler(KycRequiredException.class)
+    public ResponseEntity<ApiResponse<Void>> handleKycRequired(KycRequiredException ex) {
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(ex.getMessage()));
+    }
+
+    /**
+     * Xử lý khi user bị khóa tài khoản nhưng cố giao dịch.
+     * HTTP 403 Forbidden.
+     */
+    @ExceptionHandler(AccountLockedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccountLocked(AccountLockedException ex) {
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(ex.getMessage()));
+    }
+
     // ==================== SPRING EXCEPTIONS ====================
 
     /**
