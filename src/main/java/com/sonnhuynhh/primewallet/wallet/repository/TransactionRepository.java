@@ -38,4 +38,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      * Dùng khi user tìm kiếm giao dịch bằng mã hiển thị trên giao diện.
      */
     Optional<Transaction> findByReferenceNumber(String referenceNumber);
+
+    /**
+     * Tính tổng số tiền giao dịch theo loại, trạng thái và khoảng thời gian.
+     */
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.transactionType = :type AND t.status = :status AND t.createdAt >= :startDate AND t.createdAt < :endDate")
+    java.math.BigDecimal sumAmountByTypeAndStatusAndDate(
+            @org.springframework.data.repository.query.Param("type") com.sonnhuynhh.primewallet.wallet.enums.TransactionType type,
+            @org.springframework.data.repository.query.Param("status") com.sonnhuynhh.primewallet.wallet.enums.TransactionStatus status,
+            @org.springframework.data.repository.query.Param("startDate") java.time.LocalDateTime startDate,
+            @org.springframework.data.repository.query.Param("endDate") java.time.LocalDateTime endDate
+    );
 }

@@ -4,6 +4,8 @@ import com.sonnhuynhh.primewallet.auth.dto.AdminUserResponse;
 import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
 import com.sonnhuynhh.primewallet.auth.service.AdminService;
 import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
+import com.sonnhuynhh.primewallet.wallet.entity.DailyReport;
+import com.sonnhuynhh.primewallet.wallet.service.ReconciliationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -13,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -44,6 +47,7 @@ import java.util.UUID;
 public class AdminController {
 
     private final AdminService adminService;
+    private final ReconciliationService reconciliationService;
 
     /**
      * Lấy danh sách tất cả user (phân trang).
@@ -111,5 +115,20 @@ public class AdminController {
     public ResponseEntity<ApiResponse<AdminUserResponse>> unlockUser(@PathVariable UUID id) {
         AdminUserResponse user = adminService.unlockUser(id);
         return ResponseEntity.ok(ApiResponse.success("Đã mở khóa tài khoản", user));
+    }
+
+    /**
+     * Chạy đối soát thủ công cho một ngày cụ thể (Dành cho Admin).
+     * Nếu không truyền tham số date, tự động lấy ngày hôm nay.
+     */
+    @PostMapping("/reconcile")
+    public ResponseEntity<ApiResponse<DailyReport>> runManualReconciliation(
+            @RequestParam(required = false) String dateStr) {
+        LocalDate date = (dateStr != null && !dateStr.isEmpty())
+                ? LocalDate.parse(dateStr)
+                : LocalDate.now();
+
+        DailyReport report = reconciliationService.runReconciliationForDate(date);
+        return ResponseEntity.ok(ApiResponse.success("Đối soát hoàn tất", report));
     }
 }

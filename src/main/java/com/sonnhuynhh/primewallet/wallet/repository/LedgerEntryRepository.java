@@ -45,4 +45,15 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, UUID> 
            "COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END), 0) " +
            "FROM LedgerEntry le WHERE le.account.id = :accountId")
     BigDecimal calculateBalanceByAccountId(UUID accountId);
+
+    /**
+     * Tính tổng biến động toàn hệ thống trong khoảng thời gian.
+     */
+    @Query("SELECT COALESCE(SUM(CASE WHEN le.entryType = 'CREDIT' THEN le.amount ELSE 0 END), 0) - " +
+           "COALESCE(SUM(CASE WHEN le.entryType = 'DEBIT' THEN le.amount ELSE 0 END), 0) " +
+           "FROM LedgerEntry le WHERE le.createdAt >= :startDate AND le.createdAt < :endDate")
+    BigDecimal sumNetChangeByDate(
+            @org.springframework.data.repository.query.Param("startDate") java.time.LocalDateTime startDate,
+            @org.springframework.data.repository.query.Param("endDate") java.time.LocalDateTime endDate
+    );
 }

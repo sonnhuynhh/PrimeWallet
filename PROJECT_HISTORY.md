@@ -99,11 +99,29 @@ Tài liệu này ghi chú lại toàn bộ các giai đoạn phát triển của
 - **Lỗi RequestParam Unmodifiable Map:** Spring Boot trả về danh sách param dưới dạng Map "chỉ đọc", không cho phép dùng `.remove()` để xóa trường chữ ký.
 - Khắc phục: Khởi tạo một `new HashMap<>(params)` trước khi thao tác xử lý.
 
+## ⚖️ GIAI ĐOẠN 7: Đối soát Tự động và Báo cáo (Reconciliation & Cron Job)
+
+### 📌 Những gì đã xây dựng
+- **Kích hoạt Spring Scheduling:** Sử dụng `@EnableScheduling` để cho phép các tiến trình chạy ngầm theo lịch (Cron Job) trong ứng dụng.
+- **Tiến trình Đối soát Định kỳ (Cron Job):**
+  - Viết hàm `runDailyReconciliationJob()` trong `ReconciliationService` chạy tự động vào lúc 02:00 sáng mỗi ngày.
+  - Tự động lấy tổng tiền của tất cả các giao dịch Nạp, Rút, Chuyển trong ngày hôm trước.
+  - Tính toán tổng biến động số dư thực tế trong Sổ Cái (Ledger).
+  - So sánh để tìm ra sự trùng khớp. Nếu khớp → `MATCHED`, nếu lệch → `MISMATCHED`.
+- **Entity DailyReport:** Bảng cơ sở dữ liệu `daily_reports` được tạo để lưu vết toàn bộ kết quả đối soát mỗi ngày, phục vụ việc kiểm toán (auditing) sau này.
+- **API Đối soát Thủ công dành cho Admin:** 
+  - `POST /api/v1/admin/reconcile`: Cho phép quản trị viên chủ động kích hoạt đối soát cho một ngày bất kỳ mà không cần chờ đến 2h sáng.
+
+### 💡 Lý do & Quyết định
+- **Tại sao cần Đối soát?** Mọi hệ thống tài chính đều có nguy cơ gặp lỗi logic hoặc tấn công (hack). Đối soát (Reconciliation) là chốt chặn an toàn cuối cùng. Bằng cách so sánh chéo giữa bảng `transactions` (Lịch sử giao dịch) và bảng `ledger_entries` (Sổ cái ghi nợ/có), hệ thống sẽ ngay lập tức phát hiện nếu có bất kỳ khoản tiền nào tự nhiên sinh ra hoặc biến mất.
+- **Tại sao lại chọn chạy vào lúc 2:00 sáng?** Đây là khung giờ thấp điểm, ít phát sinh giao dịch nhất trong ngày, giúp giảm tải cho Server và Database khi thực hiện truy vấn tổng hợp lượng lớn dữ liệu.
+
 ---
 
 ## 🔮 TƯƠNG LAI (CÁC GIAI ĐOẠN TIẾP THEO)
 
 *(Phần này sẽ được cập nhật khi dự án tiến hành các Phase mới)*
 
-- **Giai đoạn 7:** Đối soát và Báo cáo tự động (Cron Job & Reconciliation) - Chạy định kỳ để đối chiếu lịch sử giao dịch và tổng kết.
-- **Giai đoạn 8:** Triển khai (Deployment) và CI/CD. Hoặc bắt đầu xây dựng Frontend App với React Native để giao tiếp với các API này.
+- **Giai đoạn 8:** Phát triển Ứng dụng Frontend (Mobile App / Web App) để giao tiếp với các API này (ví dụ sử dụng React Native hoặc Next.js).
+- **Giai đoạn 9:** Tách rời (Microservices) hoặc thêm các Service AI phân tích hành vi người dùng.
+- **Giai đoạn 10:** Triển khai (Deployment) và thiết lập CI/CD Pipeline.
