@@ -60,6 +60,25 @@ Tài liệu này ghi chú lại toàn bộ các giai đoạn phát triển của
 
 ---
 
+## 🛡️ GIAI ĐOẠN 5: Quản trị Người dùng & Bảo mật Nâng cao (User Management & Advanced Security)
+
+### 📌 Những gì đã xây dựng
+- **Tài khoản cá nhân (User Profile):** Các API xem thông tin cá nhân, cập nhật thông tin và đổi mật khẩu. Đã cấu hình phân quyền (Role-based access).
+- **Admin Dashboard:** Các API dành riêng cho quản trị viên (Admin) để quản lý User: Cập nhật trạng thái xác minh danh tính (KYC), Khóa/Mở khóa tài khoản khi có dấu hiệu gian lận.
+- **Enforcement Nghiệp vụ (Business Rules):** Ràng buộc giao dịch lớn. Bất kỳ giao dịch nạp, rút, chuyển tiền nào có giá trị lớn hơn hoặc bằng 10,000,000 VNĐ đều yêu cầu User phải hoàn thành quá trình KYC. Ném lỗi Custom (`KycRequiredException`, `AccountLockedException`) và bắt lỗi tập trung qua `GlobalExceptionHandler`.
+- **Bảo vệ Hệ thống (Rate Limiting):** Sử dụng Redis để giới hạn số lượng request API theo IP của người dùng. Áp dụng 5 request/phút cho đăng nhập (chống Brute-force) và 60 request/phút cho các API khác (chống Spam/DDoS).
+- **Ghi nhật ký Kiểm toán (Audit Logging):** Xây dựng hệ thống log tự động ghi nhận mọi thao tác quan trọng (đăng nhập, giao dịch, thay đổi trạng thái user) vào bảng `audit_logs`. Hệ thống log này được xử lý bất đồng bộ (`@Async`) để không làm ảnh hưởng đến hiệu năng của luồng giao dịch chính.
+
+### 💡 Lý do & Quyết định
+- **Tách biệt AdminService và AuthService:** Áp dụng nguyên lý SRP (Single Responsibility Principle). AuthService xử lý tác vụ của user tự làm, còn AdminService xử lý tác vụ của Admin tác động lên user khác.
+- **Tại sao dùng Redis cho Rate Limiting?** Nếu dùng bộ nhớ RAM của Java (như HashMap), khi ứng dụng restart hoặc chạy nhiều server, biến nhớ sẽ bị mất/không đồng bộ. Redis giải quyết được cả bài toán phân tán và tự động xoá dữ liệu cũ theo thời gian (TTL).
+
+### ⚠️ Vấn đề gặp phải
+- **Lỗi kết nối Kafka trong khi chạy Test Tự Động (Unit/Integration Test):** Khi chạy lệnh `mvnw test`, bài test yêu cầu phải nạp context của Spring Boot, đồng nghĩa với việc kết nối đến Kafka và Redis. Nếu Docker chưa chạy các dịch vụ này, quá trình test sẽ gặp lỗi Timeout hoặc Connection Refused.
+- **Cách khắc phục:** Luôn đảm bảo cụm Docker Compose (`docker compose up -d`) đang hoạt động trơn tru trước khi tiến hành test hoặc build ứng dụng.
+
+---
+
 ## 🔮 TƯƠNG LAI (CÁC GIAI ĐOẠN TIẾP THEO)
 
 *(Phần này sẽ được cập nhật khi dự án tiến hành các Phase mới)*
