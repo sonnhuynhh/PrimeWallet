@@ -77,12 +77,33 @@ Tài liệu này ghi chú lại toàn bộ các giai đoạn phát triển của
 - **Lỗi kết nối Kafka trong khi chạy Test Tự Động (Unit/Integration Test):** Khi chạy lệnh `mvnw test`, bài test yêu cầu phải nạp context của Spring Boot, đồng nghĩa với việc kết nối đến Kafka và Redis. Nếu Docker chưa chạy các dịch vụ này, quá trình test sẽ gặp lỗi Timeout hoặc Connection Refused.
 - **Cách khắc phục:** Luôn đảm bảo cụm Docker Compose (`docker compose up -d`) đang hoạt động trơn tru trước khi tiến hành test hoặc build ứng dụng.
 
+## 💳 GIAI ĐOẠN 6: Tích hợp Cổng thanh toán (Payment Gateway Integration)
+
+### 📌 Những gì đã xây dựng
+- **Tích hợp VNPAY Sandbox:** Kết nối với môi trường thử nghiệm của VNPAY để giả lập việc nạp tiền từ tài khoản ngân hàng thật vào ví điện tử.
+- **Tạo Link Thanh Toán (Create Payment):** Xây dựng API `POST /api/payment/vnpay/create` để tạo URL chứa các tham số thanh toán, mã hóa chữ ký bằng `HMAC-SHA512` bảo mật tuyệt đối dữ liệu.
+- **Xử lý Webhook / IPN (Instant Payment Notification):**
+  - Tạo API `GET /api/payment/vnpay/ipn` (và `/return` cho môi trường Local) để nhận tín hiệu thanh toán thành công từ VNPAY.
+  - Tự động gọi `TransactionService.topUp()` để cộng tiền vào ví người dùng ngay khi ngân hàng báo về.
+- **Tính Lũy Đẳng (Idempotency):** Áp dụng mã `TxnRef` sinh từ chuẩn `UUID` làm Idempotency Key để ngăn chặn tình trạng cộng tiền hai lần (Double-Topup) do mạng chập chờn hoặc gọi API trùng lặp.
+- **Bảo mật File Cấu hình:** Đưa các thông tin nhạy cảm (TmnCode, HashSecret) vào file `application-local.properties` và loại trừ khỏi Git (qua `.gitignore`) để tránh lộ thông tin bảo mật lên repository.
+
+### 💡 Lý do & Quyết định
+- **Tại sao lại dùng VNPAY?** VNPAY là cổng thanh toán phổ biến tại Việt Nam, cung cấp môi trường Sandbox miễn phí và đầy đủ tài liệu, rất phù hợp để mô phỏng một quy trình thanh toán E-Wallet tiêu chuẩn (Server-to-Server Webhook).
+
+### ⚠️ Vấn đề gặp phải
+- **Lỗi Mismatch Kiểu Dữ Liệu (UUID vs String):** VNPAY sinh mã giao dịch (TxnRef) là chuỗi bất kỳ, nhưng hệ thống Wallet yêu cầu Idempotency Key phải là định dạng UUID. 
+- Khắc phục: Chủ động sinh `UUID.randomUUID()` ngay từ khâu tạo thanh toán và gán vào TxnRef của VNPAY.
+- **Lỗi Xác minh Chữ ký IPN (Checksum Failed):** Hàm Hash mặc định không tự động sắp xếp tham số theo bảng chữ cái (A-Z) và không mã hóa URL (URL Encode), dẫn đến mã băm tạo ra lệch với VNPAY.
+- Khắc phục: Sửa lại `VnpayUtil.hashAllFields()` bằng cách đưa Key vào mảng `ArrayList`, gọi `Collections.sort()` và bọc giá trị qua `URLEncoder.encode()`.
+- **Lỗi RequestParam Unmodifiable Map:** Spring Boot trả về danh sách param dưới dạng Map "chỉ đọc", không cho phép dùng `.remove()` để xóa trường chữ ký.
+- Khắc phục: Khởi tạo một `new HashMap<>(params)` trước khi thao tác xử lý.
+
 ---
 
 ## 🔮 TƯƠNG LAI (CÁC GIAI ĐOẠN TIẾP THEO)
 
 *(Phần này sẽ được cập nhật khi dự án tiến hành các Phase mới)*
 
-- **Giai đoạn 5:** Tích hợp Cổng thanh toán bên thứ ba (Third-party Payment Gateway) để nạp tiền thật vào ví.
-- **Giai đoạn 6:** Tách rời (Microservices) hoặc thêm các Service mới bằng ngôn ngữ khác (ví dụ: Python AI Service lắng nghe Kafka để phát hiện gian lận).
-- **Giai đoạn 7:** Triển khai (Deployment) và CI/CD.
+- **Giai đoạn 7:** Đối soát và Báo cáo tự động (Cron Job & Reconciliation) - Chạy định kỳ để đối chiếu lịch sử giao dịch và tổng kết.
+- **Giai đoạn 8:** Triển khai (Deployment) và CI/CD. Hoặc bắt đầu xây dựng Frontend App với React Native để giao tiếp với các API này.
