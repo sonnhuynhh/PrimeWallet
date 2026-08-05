@@ -4,6 +4,7 @@ import com.sonnhuynhh.primewallet.auth.entity.KycStatus;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
 import com.sonnhuynhh.primewallet.common.exception.*;
+import com.sonnhuynhh.primewallet.common.service.AuditService;
 import com.sonnhuynhh.primewallet.common.util.ReferenceNumberGenerator;
 import com.sonnhuynhh.primewallet.wallet.dto.*;
 import com.sonnhuynhh.primewallet.wallet.event.TransactionEvent;
@@ -56,6 +57,7 @@ public class TransactionService {
     private final LedgerService ledgerService;
     private final ReferenceNumberGenerator referenceNumberGenerator;
     private final TransactionEventPublisher eventPublisher;
+    private final AuditService auditService;
 
     /**
      * Ngưỡng giao dịch yêu cầu KYC: 10 triệu VNĐ.
@@ -122,6 +124,11 @@ public class TransactionService {
         eventPublisher.publish(buildEvent(transaction));
 
         log.info("Nạp tiền thành công: {} VNĐ vào ví {}", request.getAmount(), account.getAccountNumber());
+
+        // 8. Ghi audit log
+        auditService.log(userId, "TOPUP",
+                String.format("Nạp %s VNĐ vào ví %s", request.getAmount(), account.getAccountNumber()), null);
+
         return toResponse(transaction);
     }
 
@@ -193,6 +200,11 @@ public class TransactionService {
         eventPublisher.publish(buildEvent(transaction));
 
         log.info("Rút tiền thành công: {} VNĐ từ ví {}", request.getAmount(), account.getAccountNumber());
+
+        // 10. Ghi audit log
+        auditService.log(userId, "WITHDRAW",
+                String.format("Rút %s VNĐ từ ví %s", request.getAmount(), account.getAccountNumber()), null);
+
         return toResponse(transaction);
     }
 
@@ -284,6 +296,12 @@ public class TransactionService {
 
         log.info("Chuyển tiền thành công: {} VNĐ từ {} → {}",
                 request.getAmount(), sourceAccount.getAccountNumber(), destAccount.getAccountNumber());
+
+        // 10. Ghi audit log
+        auditService.log(userId, "TRANSFER",
+                String.format("Chuyển %s VNĐ từ %s → %s",
+                        request.getAmount(), sourceAccount.getAccountNumber(), destAccount.getAccountNumber()), null);
+
         return toResponse(transaction);
     }
 

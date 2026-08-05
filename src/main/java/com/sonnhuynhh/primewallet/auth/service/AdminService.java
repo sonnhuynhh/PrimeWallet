@@ -5,6 +5,7 @@ import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
+import com.sonnhuynhh.primewallet.common.service.AuditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -36,6 +37,7 @@ import java.util.UUID;
 public class AdminService {
 
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
     // ==================== DANH SÁCH USER ====================
 
@@ -95,6 +97,9 @@ public class AdminService {
         log.info("Admin đã cập nhật KYC cho user {} → {}, note: {}",
                 user.getEmail(), request.getKycStatus(), request.getNote());
 
+        auditService.log(userId, "KYC_UPDATE",
+                String.format("Cập nhật KYC → %s, note: %s", request.getKycStatus(), request.getNote()), null);
+
         return toAdminUserResponse(user);
     }
 
@@ -127,6 +132,9 @@ public class AdminService {
 
         log.warn("⚠️ Admin đã KHÓA tài khoản user: {}", user.getEmail());
 
+        auditService.log(userId, "LOCK_USER",
+                "Khóa tài khoản: " + user.getEmail(), null);
+
         return toAdminUserResponse(user);
     }
 
@@ -148,6 +156,9 @@ public class AdminService {
         user = userRepository.save(user);
 
         log.info("✅ Admin đã MỞ KHÓA tài khoản user: {}", user.getEmail());
+
+        auditService.log(userId, "UNLOCK_USER",
+                "Mở khóa tài khoản: " + user.getEmail(), null);
 
         return toAdminUserResponse(user);
     }

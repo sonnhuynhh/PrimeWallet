@@ -1,6 +1,7 @@
 package com.sonnhuynhh.primewallet.auth.service;
 
 import com.sonnhuynhh.primewallet.auth.dto.*;
+import com.sonnhuynhh.primewallet.common.service.AuditService;
 import com.sonnhuynhh.primewallet.auth.entity.RefreshToken;
 import com.sonnhuynhh.primewallet.auth.entity.Role;
 import com.sonnhuynhh.primewallet.auth.entity.User;
@@ -50,6 +51,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
+    private final AuditService auditService;
 
     @Value("${jwt.refresh-token-expiration}")
     private long refreshTokenExpiration; // 7 ngày = 604800000ms
@@ -82,7 +84,11 @@ public class AuthService {
 
         user = userRepository.save(user);
 
-        // 4. Tạo token và trả về
+        // 4. Ghi audit log
+        auditService.log(user.getId(), "REGISTER",
+                "Đăng ký tài khoản mới: " + user.getEmail(), null);
+
+        // 5. Tạo token và trả về
         return generateAuthResponse(user);
     }
 
@@ -109,7 +115,11 @@ public class AuthService {
         // 3. Thu hồi tất cả refresh token cũ (an toàn)
         refreshTokenRepository.revokeAllByUser(user);
 
-        // 4. Tạo token mới và trả về
+        // 4. Ghi audit log
+        auditService.log(user.getId(), "LOGIN",
+                "Đăng nhập thành công: " + user.getEmail(), null);
+
+        // 5. Tạo token mới và trả về
         return generateAuthResponse(user);
     }
 
@@ -243,6 +253,10 @@ public class AuthService {
         // Bước 4: Mã hóa và lưu mật khẩu mới
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+
+        // Bước 5: Ghi audit log
+        auditService.log(userId, "CHANGE_PASSWORD",
+                "Đổi mật khẩu thành công: " + user.getEmail(), null);
     }
 
     // ==================== HELPER METHODS ====================
