@@ -14,6 +14,8 @@ type AuthContextValue = {
   reloadSession: () => Promise<void>;
   updateProfile: (payload: UpdateProfileRequest) => Promise<void>;
   changePassword: (payload: ChangePasswordRequest) => Promise<void>;
+  activeWalletMode: "fiat" | "crypto" | null;
+  setActiveWalletMode: (mode: "fiat" | "crypto" | null) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -26,6 +28,7 @@ async function buildSession(auth: AuthResponse): Promise<SessionState> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [activeWalletMode, setActiveWalletMode] = useState<"fiat" | "crypto" | null>(null);
 
   const reloadSession = async () => {
     const { accessToken, refreshToken } = await getTokens();
@@ -80,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     await clearTokens();
     setSession(null);
+    setActiveWalletMode(null);
   };
 
   const updateProfile = async (payload: UpdateProfileRequest) => {
@@ -101,8 +105,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       reloadSession,
       updateProfile,
       changePassword: updatePassword,
+      activeWalletMode,
+      setActiveWalletMode,
     }),
-    [loading, session]
+    [loading, session, activeWalletMode]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

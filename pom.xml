@@ -83,6 +83,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- ==================== WEB3 / BLOCKCHAIN ==================== -->
+        <dependency>
+            <groupId>org.web3j</groupId>
+            <artifactId>core</artifactId>
+            <version>4.12.1</version>
+        </dependency>
+
         <!-- ==================== DEV TOOLS ==================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
