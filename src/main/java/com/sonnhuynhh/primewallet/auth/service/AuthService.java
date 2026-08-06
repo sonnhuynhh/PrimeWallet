@@ -174,6 +174,7 @@ public class AuthService {
                 .kycStatus(user.getKycStatus())
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt())
+                .role(user.getRole().name())
                 .build();
     }
 
@@ -209,6 +210,7 @@ public class AuthService {
                 .kycStatus(user.getKycStatus())
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt())
+                .role(user.getRole().name())
                 .build();
     }
 

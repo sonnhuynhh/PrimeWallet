@@ -24,4 +24,19 @@ public class EtherscanService {
 
         return restTemplate.getForObject(url, EtherscanResponse.class);
     }
+
+    public java.math.BigInteger getWalletBalance(String address) {
+        String url = String.format("%s?module=account&action=balance&address=%s&tag=latest&apikey=%s",
+                API_URL, address, apiKey);
+
+        try {
+            java.util.Map response = restTemplate.getForObject(url, java.util.Map.class);
+            if (response != null && "1".equals(response.get("status"))) {
+                return new java.math.BigInteger(response.get("result").toString());
+            }
+        } catch (Exception e) {
+            System.err.println("Etherscan API get balance failed: " + e.getMessage());
+        }
+        return null; // Return null if failed
+    }
 }

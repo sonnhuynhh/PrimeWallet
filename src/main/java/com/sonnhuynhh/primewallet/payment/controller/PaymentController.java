@@ -88,10 +88,48 @@ public class PaymentController {
         paymentService.processIpn(params);
         
         String vnp_ResponseCode = params.get("vnp_ResponseCode");
-        if ("00".equals(vnp_ResponseCode)) {
-            return ResponseEntity.ok("Thanh toán thành công! Tiền đã được nạp vào ví của bạn. Vui lòng quay lại ứng dụng.");
-        } else {
-            return ResponseEntity.badRequest().body("Giao dịch thất bại hoặc bị hủy. Mã lỗi: " + vnp_ResponseCode);
-        }
+        boolean isSuccess = "00".equals(vnp_ResponseCode);
+        
+        String title = isSuccess ? "Thanh toán thành công!" : "Giao dịch thất bại";
+        String message = isSuccess ? "Tiền đã được nạp vào ví của bạn. Vui lòng đóng trang này để quay lại ứng dụng." 
+                                   : "Giao dịch thất bại hoặc bị hủy. Mã lỗi: " + vnp_ResponseCode;
+        String colorClass = isSuccess ? "text-emerald-400" : "text-red-400";
+        String bgClass = isSuccess ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30";
+        String icon = isSuccess ? "✓" : "✗";
+
+        String html = """
+            <!DOCTYPE html>
+            <html lang="vi">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Kết quả thanh toán VNPAY</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+            </head>
+            <body class="bg-slate-950 text-slate-200 min-h-screen flex items-center justify-center p-4 font-sans">
+                <div class="max-w-md w-full %s border rounded-2xl p-8 text-center shadow-2xl backdrop-blur-sm">
+                    <div class="w-20 h-20 mx-auto rounded-full %s border-4 border-current flex items-center justify-center text-4xl font-bold mb-6">
+                        %s
+                    </div>
+                    <h1 class="text-2xl font-black text-white mb-2">%s</h1>
+                    <p class="text-slate-400 mb-8 leading-relaxed">%s</p>
+                    <button onclick="window.close()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 px-6 rounded-xl transition-colors border border-slate-700">
+                        Đóng cửa sổ và Quay lại ví
+                    </button>
+                    <script>
+                        // Thử đóng tự động sau 5 giây nếu trình duyệt cho phép
+                        setTimeout(() => {
+                            window.close();
+                        }, 5000);
+                    </script>
+                </div>
+            </body>
+            </html>
+        """.formatted(bgClass, colorClass, icon, title, message);
+
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.add("Content-Type", "text/html; charset=UTF-8");
+        
+        return new ResponseEntity<>(html, headers, org.springframework.http.HttpStatus.OK);
     }
 }

@@ -14,6 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
+import com.sonnhuynhh.primewallet.common.entity.AuditLog;
+import com.sonnhuynhh.primewallet.common.repository.AuditLogRepository;
+import com.sonnhuynhh.primewallet.common.dto.AuditLogResponse;
 
 /**
  * Service dành riêng cho các thao tác quản trị (Admin).
@@ -38,6 +41,36 @@ public class AdminService {
 
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final AuditLogRepository auditLogRepository;
+
+    // ==================== AUDIT LOGS ====================
+
+    /**
+     * Lấy danh sách audit log.
+     * Có thể lọc theo user cụ thể.
+     */
+    public Page<AuditLogResponse> getAuditLogs(Pageable pageable, UUID userId) {
+        Page<AuditLog> logs;
+        if (userId != null) {
+            logs = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
+        } else {
+            // Không có method findAllOrderByCreatedAtDesc sẵn, ta dùng findAll rồi set sort trong Pageable ở Controller
+            logs = auditLogRepository.findAll(pageable);
+        }
+
+        return logs.map(this::toAuditLogResponse);
+    }
+    
+    private AuditLogResponse toAuditLogResponse(AuditLog log) {
+        return AuditLogResponse.builder()
+                .id(log.getId())
+                .userId(log.getUserId())
+                .action(log.getAction())
+                .detail(log.getDetail())
+                .ipAddress(log.getIpAddress())
+                .createdAt(log.getCreatedAt())
+                .build();
+    }
 
     // ==================== DANH SÁCH USER ====================
 
@@ -98,7 +131,7 @@ public class AdminService {
                 user.getEmail(), request.getKycStatus(), request.getNote());
 
         auditService.log(userId, "KYC_UPDATE",
-                String.format("Cập nhật KYC → %s, note: %s", request.getKycStatus(), request.getNote()), null);
+                String.format("Cập nhật KYC cho tài khoản %s → %s, note: %s", user.getEmail(), request.getKycStatus(), request.getNote()), null);
 
         return toAdminUserResponse(user);
     }

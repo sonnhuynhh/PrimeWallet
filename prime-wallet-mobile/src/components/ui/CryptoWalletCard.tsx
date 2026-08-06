@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
+import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert, Modal } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import { useNavigation } from "@react-navigation/native";
 import { ethers } from "ethers";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
 import { Card } from "./Card";
 import { linkCryptoWallet, getLinkedWallets, getWalletBalance, CryptoWallet, WalletBalance } from "../../services/crypto";
 
@@ -12,23 +15,34 @@ export function CryptoWalletCard() {
   const [importing, setImporting] = useState(false);
   const [seedPhraseInput, setSeedPhraseInput] = useState("");
   const [generatedSeedPhrase, setGeneratedSeedPhrase] = useState<string | null>(null);
+  
+  const [showReceiveModal, setShowReceiveModal] = useState(false);
+  const navigation = useNavigation<any>();
 
   useEffect(() => {
     loadWallet();
   }, []);
 
+  const [balanceError, setBalanceError] = useState(false);
+
   const loadWallet = async () => {
     try {
       setLoading(true);
+      setBalanceError(false);
       const wallets = await getLinkedWallets();
       const sepoliaWallet = wallets.find((w) => w.blockchainNetwork === "ETH_SEPOLIA");
       if (sepoliaWallet) {
         setWallet(sepoliaWallet);
-        const balance = await getWalletBalance(sepoliaWallet.id);
-        setBalanceInfo(balance);
+        try {
+            const balance = await getWalletBalance(sepoliaWallet.id);
+            setBalanceInfo(balance);
+        } catch (err) {
+            setBalanceError(true);
+        }
       }
     } catch (e) {
-      console.error("Failed to load crypto wallet", e);
+      // Bỏ console.error để tránh hiện màn hình đỏ trên Expo
+      console.warn("Failed to load crypto wallet", e);
     } finally {
       setLoading(false);
     }
@@ -191,22 +205,61 @@ export function CryptoWalletCard() {
                 <Text className="text-xs text-violet-300">Testnet</Text>
             </View>
         </View>
-        <Text className="text-4xl font-black text-white">
-          {balanceInfo?.balanceEth ?? "0.00"} <Text className="text-2xl text-violet-400">ETH</Text>
-        </Text>
+        {balanceError ? (
+            <View className="flex-row items-center gap-2">
+                <Ionicons name="warning" size={24} color="#f87171" />
+                <Text className="text-xl font-bold text-red-400">Lỗi kết nối mạng</Text>
+            </View>
+        ) : (
+            <Text className="text-4xl font-black text-white">
+                {balanceInfo?.balanceEth ?? "..."} <Text className="text-2xl text-violet-400">ETH</Text>
+            </Text>
+        )}
         <Text className="text-xs text-slate-400 font-mono" numberOfLines={1} ellipsizeMode="middle">
           {wallet.walletAddress}
         </Text>
       </Card>
       
       <View className="flex-row gap-3">
-        <TouchableOpacity className="flex-1 bg-violet-600 p-3 rounded-xl items-center">
+        <TouchableOpacity onPress={() => navigation.navigate("Transfer")} className="flex-1 bg-violet-600 p-3 rounded-xl items-center">
             <Text className="text-white font-bold">Chuyển ETH</Text>
         </TouchableOpacity>
-        <TouchableOpacity className="flex-1 bg-slate-800 p-3 rounded-xl items-center">
+        <TouchableOpacity onPress={() => setShowReceiveModal(true)} className="flex-1 bg-slate-800 p-3 rounded-xl items-center border border-slate-700">
             <Text className="text-violet-300 font-bold">Nhận</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Modal Nhận Crypto */}
+      <Modal visible={showReceiveModal} transparent animationType="fade">
+        <View className="flex-1 bg-black/80 justify-center px-6">
+          <Card className="gap-4 border border-violet-500/30">
+            <Text className="text-xl font-bold text-white mb-2 text-center">Nhận Crypto (Mạng Sepolia)</Text>
+            
+            <Text className="text-slate-300 text-center mb-2 leading-6">
+              Bạn chỉ có thể nhận các token thuộc mạng Ethereum Sepolia (Testnet).
+            </Text>
+            
+            <View className="bg-slate-800 p-4 rounded-xl border border-slate-700 items-center">
+              <Text className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-2">Địa chỉ ví của bạn</Text>
+              <Text className="text-violet-300 font-mono text-center">
+                {wallet.walletAddress}
+              </Text>
+            </View>
+            
+            <View className="flex-row gap-3 mt-4">
+              <TouchableOpacity onPress={() => setShowReceiveModal(false)} className="flex-1 py-3 items-center rounded-lg border border-slate-600">
+                <Text className="text-slate-300 font-bold">Đóng</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={async () => {
+                await Clipboard.setStringAsync(wallet.walletAddress);
+                Alert.alert("Thành công", "Đã sao chép địa chỉ ví!");
+              }} className="flex-1 bg-violet-600 py-3 items-center rounded-lg">
+                <Text className="text-white font-bold">Sao chép</Text>
+              </TouchableOpacity>
+            </View>
+          </Card>
+        </View>
+      </Modal>
     </View>
   );
 }

@@ -1,19 +1,61 @@
 import { useEffect, useState } from "react";
-import { Text, View, TouchableOpacity } from "react-native";
+import { Text, View, TouchableOpacity, Modal, TextInput, Alert, Linking, ActivityIndicator, AppState } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
 
 import { Card } from "../components/ui/Card";
 import { Screen } from "../components/ui/Screen";
 import { CryptoWalletCard } from "../components/ui/CryptoWalletCard";
 import { useAuth } from "../context/AuthContext";
+import { createPaymentUrl } from "../services/payment";
 
 export function HomeScreen() {
-  const { session, activeWalletMode, setActiveWalletMode } = useAuth();
+  const { session, activeWalletMode, setActiveWalletMode, reloadSession } = useAuth();
+  const navigation = useNavigation<any>();
   const [balance, setBalance] = useState(session?.account?.balance ?? "0");
+  
+  // VNPAY Modal state
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositLoading, setDepositLoading] = useState(false);
 
   useEffect(() => {
     setBalance(session?.account?.balance ?? "0");
   }, [session?.account?.balance]);
+
+  // Tự động tải lại số dư khi quay lại ứng dụng (từ trình duyệt VNPAY)
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", nextAppState => {
+      if (nextAppState === "active") {
+        reloadSession();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [reloadSession]);
+
+  const handleDeposit = async () => {
+    const amountNum = parseInt(depositAmount.replace(/\D/g, ""));
+    if (isNaN(amountNum) || amountNum < 10000) {
+      Alert.alert("Lỗi", "Số tiền nạp tối thiểu là 10,000đ");
+      return;
+    }
+    setDepositLoading(true);
+    try {
+      const res = await createPaymentUrl(amountNum, "Nap tien PrimeWallet");
+      setShowDepositModal(false);
+      setDepositAmount("");
+      if (res.paymentUrl) {
+        await Linking.openURL(res.paymentUrl);
+      }
+    } catch (e: any) {
+      Alert.alert("Lỗi nạp tiền", e.message || "Đã xảy ra lỗi");
+    } finally {
+      setDepositLoading(false);
+    }
+  };
 
   const fullName = session?.profile.fullName ?? session?.auth.fullName ?? "Khách";
 
@@ -92,11 +134,45 @@ export function HomeScreen() {
                 <Text className="text-lg font-semibold text-emerald-400">{session?.profile.status ?? "ACTIVE"}</Text>
               </Card>
             </View>
-            
-            <Card className="gap-3 border border-slate-700">
-                <Text className="text-lg font-semibold text-white">Tính năng Fiat</Text>
-                <Text className="leading-6 text-slate-300">Tính năng Nạp tiền VNPAY và Chuyển tiền nội bộ đang được hoàn thiện.</Text>
-            </Card>
+            <View className="flex-row gap-3 mt-2">
+              <TouchableOpacity onPress={() => setShowDepositModal(true)} className="flex-1 bg-emerald-500 p-4 rounded-xl items-center">
+                <Text className="text-emerald-950 font-bold text-lg">Nạp tiền</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate("Transfer")} className="flex-1 bg-slate-800 p-4 rounded-xl items-center border border-slate-700">
+                <Text className="text-emerald-400 font-bold text-lg">Chuyển tiền</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Nạp Tiền VNPAY */}
+            <Modal visible={showDepositModal} transparent animationType="fade">
+              <View className="flex-1 bg-black/80 justify-center px-6">
+                <Card className="gap-4 border border-emerald-500/30">
+                  <Text className="text-xl font-bold text-white mb-2">Nạp tiền vào ví (VNPAY)</Text>
+                  
+                  <View className="gap-2">
+                    <Text className="text-slate-400">Số tiền (VND)</Text>
+                    <TextInput
+                      className="bg-slate-800 text-white p-4 rounded-xl border border-slate-600 text-lg"
+                      value={depositAmount}
+                      onChangeText={setDepositAmount}
+                      placeholder="Nhập số tiền..."
+                      placeholderTextColor="#64748b"
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  
+                  <View className="flex-row gap-3 mt-4">
+                    <TouchableOpacity onPress={() => setShowDepositModal(false)} className="flex-1 py-3 items-center rounded-lg border border-slate-600">
+                      <Text className="text-slate-300 font-bold">Hủy</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={handleDeposit} disabled={depositLoading} className="flex-1 bg-emerald-500 py-3 items-center rounded-lg flex-row justify-center">
+                      {depositLoading && <ActivityIndicator color="#064e3b" size="small" style={{ marginRight: 8 }} />}
+                      <Text className="text-emerald-950 font-bold">Tiếp tục</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Card>
+              </View>
+            </Modal>
           </View>
         )}
 

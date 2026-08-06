@@ -64,7 +64,7 @@ export function TransferScreen() {
         return;
       }
 
-      const provider = new ethers.JsonRpcProvider("https://rpc.sepolia.org");
+      const provider = new ethers.JsonRpcProvider("https://ethereum-sepolia-rpc.publicnode.com");
       const wallet = new ethers.Wallet(pk, provider);
 
       // 1. Chuẩn bị giao dịch
