@@ -121,7 +121,7 @@ public class TransactionService {
         transaction = transactionRepository.save(transaction);
 
         // 7. Phát event lên Kafka — các consumer sẽ xử lý thông báo, cache, ...
-        eventPublisher.publish(buildEvent(transaction));
+        eventPublisher.publish(buildEvent(transaction, userId));
 
         log.info("Nạp tiền thành công: {} VNĐ vào ví {}", request.getAmount(), account.getAccountNumber());
 
@@ -197,7 +197,7 @@ public class TransactionService {
         transaction = transactionRepository.save(transaction);
 
         // 9. Phát event lên Kafka
-        eventPublisher.publish(buildEvent(transaction));
+        eventPublisher.publish(buildEvent(transaction, userId));
 
         log.info("Rút tiền thành công: {} VNĐ từ ví {}", request.getAmount(), account.getAccountNumber());
 
@@ -292,7 +292,7 @@ public class TransactionService {
         transaction = transactionRepository.save(transaction);
 
         // 9. Phát event lên Kafka
-        eventPublisher.publish(buildEvent(transaction));
+        eventPublisher.publish(buildEvent(transaction, userId));
 
         log.info("Chuyển tiền thành công: {} VNĐ từ {} → {}",
                 request.getAmount(), sourceAccount.getAccountNumber(), destAccount.getAccountNumber());
@@ -324,9 +324,10 @@ public class TransactionService {
      * - Đảm bảo mọi event có cùng format
      * - Dễ thêm trường mới sau này (VD: userId, deviceInfo)
      */
-    private TransactionEvent buildEvent(Transaction transaction) {
+    private TransactionEvent buildEvent(Transaction transaction, UUID userId) {
         return TransactionEvent.builder()
                 .transactionId(transaction.getId())
+                .userId(userId)
                 .referenceNumber(transaction.getReferenceNumber())
                 .transactionType(transaction.getTransactionType().name())
                 .sourceAccountNumber(

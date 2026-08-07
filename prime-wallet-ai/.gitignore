@@ -1,0 +1,17 @@
+# =============================================
+# PrimeWallet AI Microservice - gitignore
+# =============================================
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime data (SQLite DB + trained model do NOT commit)
+data/
+
+# Env / secrets
+.env
+.env.local

@@ -53,6 +53,12 @@ public class TransactionEvent {
     private UUID transactionId;
 
     /**
+     * ID người dùng thực hiện giao dịch.
+     * AI service dùng để nhóm giao dịch theo user (risk score, insights).
+     */
+    private UUID userId;
+
+    /**
      * Mã giao dịch hiển thị cho user (VD: "TXN20260711123456").
      */
     private String referenceNumber;

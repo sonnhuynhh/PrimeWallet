@@ -183,6 +183,7 @@ public class CryptoTransactionController {
         try {
             transactionEventPublisher.publish(TransactionEvent.builder()
                     .transactionId(saved.getId())
+                    .userId(userId)
                     .referenceNumber("CRYPTO-" + txHash)
                     .transactionType("CRYPTO_SEND")
                     .sourceAccountNumber(request.getFromAddress())

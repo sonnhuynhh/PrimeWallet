@@ -11,6 +11,7 @@ import { createPaymentUrl } from '../../services/payment';
 import { transfer, withdraw, getTransactionHistory, getMyAccounts } from '../../services/wallet';
 import type { TransactionResponse } from '../../types/api';
 import { createIdempotencyKey } from '../../utils/uuid';
+import { AiInsightsPanel } from '../ai/AiInsightsPanel';
 
 /**
  * Ví Fiat — giao diện riêng cho tài khoản VND.
@@ -259,6 +260,9 @@ export function FiatShell() {
               </div>
             </div>
           </Card>
+
+          {/* AI Insights */}
+          <AiInsightsPanel />
 
           {/* Quick actions / recent */}
           <div className="grid md:grid-cols-2 gap-6">
