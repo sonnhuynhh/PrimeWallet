@@ -73,6 +73,7 @@ public class CryptoWalletController {
                             .chainId(n.getChainId())
                             .testnet(n.isTestnet())
                             .explorerUrl(config != null ? config.getExplorerUrl() : null)
+                            .rpcUrl(config != null ? config.getRpcUrl() : null)
                             .build();
                 })
                 .toList();
@@ -90,6 +91,52 @@ public class CryptoWalletController {
         UUID userId = getUserId(authentication);
         CryptoWalletResponse response = cryptoWalletService.linkWallet(userId, request);
         return ResponseEntity.ok(ApiResponse.success("Liên kết ví thành công", response));
+    }
+
+    /**
+     * Liên kết ví CÓ XÁC MINH QUYỀN SỞ HỮU.
+     *
+     * Non-custodial: server KHÔNG bao giờ nhận private key / seed phrase.
+     * Thay vào đó client ký challenge (đã tạo qua /ownership/challenge) bằng private key,
+     * server recover address từ chữ ký → chỉ liên kết khi chữ ký khớp địa chỉ.
+     *
+     * Body: { walletAddress, blockchainNetwork, label?, message, signature }
+     * - message: challenge trả về từ GET /ownership/challenge?address=0x...
+     * - signature: 0x... do client ký message bằng ethers.js
+     */
+    @PostMapping("/link-with-proof")
+    public ResponseEntity<ApiResponse<CryptoWalletResponse>> linkWalletWithProof(
+            Authentication authentication,
+            @Valid @RequestBody LinkWithProofRequest request) {
+
+        UUID userId = getUserId(authentication);
+
+        // 1. Challenge phải hợp lệ (nonce khớp + chưa hết hạn)
+        boolean challengeValid = ownershipVerificationService.isValidChallenge(
+                request.getWalletAddress(), request.getMessage());
+        if (!challengeValid) {
+            return ResponseEntity.ok(ApiResponse.error(
+                    "Challenge không hợp lệ hoặc đã hết hạn — hãy tạo challenge mới"));
+        }
+
+        // 2. Chữ ký phải khớp địa chỉ (recover từ signature)
+        boolean verified = ownershipVerificationService.verifySignature(
+                request.getWalletAddress(), request.getMessage(), request.getSignature());
+        if (!verified) {
+            return ResponseEntity.ok(ApiResponse.error(
+                    "Chữ ký không khớp với địa chỉ — chỉ chủ sở hữu mới được liên kết ví này"));
+        }
+
+        // Dùng 1 lần → hủy challenge tránh replay
+        ownershipVerificationService.invalidateChallenge(request.getWalletAddress());
+
+        // 3. Liên kết
+        LinkWalletRequest link = new LinkWalletRequest();
+        link.setWalletAddress(request.getWalletAddress());
+        link.setBlockchainNetwork(request.getBlockchainNetwork());
+        link.setLabel(request.getLabel());
+        CryptoWalletResponse response = cryptoWalletService.linkWallet(userId, link);
+        return ResponseEntity.ok(ApiResponse.success("Liên kết ví thành công (đã xác minh quyền sở hữu)", response));
     }
 
     /**
@@ -197,7 +244,7 @@ public class CryptoWalletController {
     /**
      * Tạo challenge để xác minh quyền sở hữu ví.
      */
-    @PostMapping("/ownership/challenge")
+    @GetMapping("/ownership/challenge")
     public ResponseEntity<ApiResponse<OwnershipChallengeResponse>> createOwnershipChallenge(
             @RequestParam String address) {
 

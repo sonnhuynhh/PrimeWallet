@@ -34,6 +34,24 @@ export async function linkCryptoWallet(payload: {
   });
 }
 
+/**
+ * Liên kết ví CÓ xác minh quyền sở hữu (non-custodial).
+ * Client ký challenge bằng private key/seed, server recover address → chỉ link khi khớp.
+ * Không bao giờ gửi private key/seed lên server.
+ */
+export async function linkCryptoWalletWithProof(payload: {
+  walletAddress: string;
+  blockchainNetwork: string;
+  label?: string;
+  message: string;
+  signature: string;
+}): Promise<CryptoWalletInfo> {
+  return request<CryptoWalletInfo>("/api/v1/crypto/wallets/link-with-proof", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getLinkedWallets(): Promise<CryptoWalletInfo[]> {
   return request<CryptoWalletInfo[]>("/api/v1/crypto/wallets");
 }

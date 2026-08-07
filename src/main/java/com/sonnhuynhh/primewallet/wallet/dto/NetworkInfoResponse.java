@@ -19,4 +19,6 @@ public class NetworkInfoResponse {
     private Long chainId;
     private boolean testnet;
     private String explorerUrl;
+    /** RPC URL do server quản lý — client dùng để ký offline (tránh RPC cứng trong frontend). */
+    private String rpcUrl;
 }

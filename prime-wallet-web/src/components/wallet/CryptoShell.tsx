@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Plus, ArrowDownToLine, ArrowUpFromLine, History, Trash2,
   Wallet, Bitcoin, Copy, CheckCircle2, ShieldCheck, Loader2, RefreshCcw,
-  ExternalLink, Wifi, WifiOff
+  ExternalLink, Wifi, WifiOff, KeyRound
 } from 'lucide-react';
 import { WalletLayout } from './WalletLayout';
 import { Card } from '../ui/Card';
@@ -13,10 +13,11 @@ import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { ethers } from 'ethers';
 import {
-  getSupportedNetworks, getLinkedWallets, getWalletBalance, linkCryptoWallet,
-  unlinkCryptoWallet, estimateGas, sendTransaction, getWalletHistory,
-  getInAppTransactions, createOwnershipChallenge, verifyOwnership,
+  getSupportedNetworks, getLinkedWallets, getWalletBalance,
+  linkCryptoWalletWithProof, unlinkCryptoWallet, estimateGas, sendTransaction,
+  getWalletHistory, getInAppTransactions, createOwnershipChallenge, verifyOwnership,
 } from '../../services/crypto';
+import { getSessionSeed, setSessionSeed, clearSessionSeed } from '../../services/seedStore';
 import type {
   NetworkInfo, CryptoWalletInfo, WalletBalanceData, TokenBalance, EstimateGasData,
   EtherscanTransaction, InAppTransaction,
@@ -53,6 +54,20 @@ export function CryptoShell() {
   const [linkLabel, setLinkLabel] = useState('');
   const [linkMode, setLinkMode] = useState<'link' | 'create'>('link');
   const [linkLoading, setLinkLoading] = useState(false);
+
+  // ===== Create wallet (seed phrase) =====
+  const [createStep, setCreateStep] = useState<1 | 2 | 3>(1); // 1: seed | 2: đã sao lưu + public key | 3: done
+  const [createdSeed, setCreatedSeed] = useState<string[]>([]);
+  const [createdAddress, setCreatedAddress] = useState('');
+  const [savedChecked, setSavedChecked] = useState(false);
+  const [seedCopied, setSeedCopied] = useState(false);
+
+  // ===== Unlock (nhập seed mỗi phiên) =====
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockAddress, setUnlockAddress] = useState('');
+  const [unlockSeed, setUnlockSeed] = useState('');
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [unlockLoading, setUnlockLoading] = useState(false);
 
   // ===== Send =====
   const [sendTo, setSendTo] = useState('');
@@ -151,26 +166,88 @@ export function CryptoShell() {
   }, [tab, historyMode, activeWalletId]);
 
   // ===== Link / Create =====
-  const handleLink = async (e: React.FormEvent) => {
+
+  /** Bước 1 (Tạo mới): sinh seed phrase + địa chỉ, hiện 1 lần duy nhất. */
+  const handleCreateStart = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!linkNetwork) { alert('Vui lòng chọn mạng blockchain'); return; }
     try {
       setLinkLoading(true);
-      if (linkMode === 'create') {
-        // Tạo ví mới — người dùng tự nắm private key (lưu cục bộ cho demo; cảnh báo trong thực tế)
-        const w = ethers.Wallet.createRandom();
-        localStorage.setItem(`prime_pk_${w.address.toLowerCase()}`, w.privateKey);
-        setLinkAddress(w.address);
-        alert(`Đã tạo ví mới!\nĐịa chỉ: ${w.address}\n\nPrivate key đã lưu trong trình duyệt (chỉ dùng cho demo).\nHãy sao lưu an toàn!`);
-      }
-      if (!linkAddress.trim() || !linkNetwork) {
-        alert('Vui lòng nhập địa chỉ và chọn mạng');
-        return;
-      }
-      await linkCryptoWallet({
+      const w = ethers.Wallet.createRandom(); // HDNodeWallet có .mnemonic.phrase
+      setCreatedSeed(w.mnemonic!.phrase.split(' '));
+      setCreatedAddress(w.address);
+      setSavedChecked(false);
+      setSeedCopied(false);
+      setCreateStep(2); // hiện seed phrase cho user sao lưu 1 lần duy nhất
+      // KHÔNG lưu private key / seed vào localStorage — chỉ giữ trong state (sẽ mất khi đóng modal)
+      setLinkAddress(w.address); // để bước liên kết đúng ví vừa tạo
+    } catch (err: any) {
+      alert('Lỗi tạo ví: ' + err.message);
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  /** Bước 3 (Tạo mới): đã sao lưu seed → liên kết ví (public key hiện ra sau khi link). */
+  const handleCreateConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createdAddress || !linkNetwork) return;
+    try {
+      setLinkLoading(true);
+      // Link ví vừa tạo kèm bằng chứng quyền sở hữu (non-custodial) —
+      // backend chỉ lưu địa chỉ công khai, KHÔNG nhận/lưu seed phrase
+      const seed = createdSeed.join(' ');
+      const signerForProof = ethers.Wallet.fromPhrase(seed);
+      const ch = await createOwnershipChallenge(createdAddress);
+      const proofSignature = signerForProof.signMessageSync(ch.message);
+      const saved = await linkCryptoWalletWithProof({
+        walletAddress: createdAddress,
+        blockchainNetwork: linkNetwork,
+        label: linkLabel.trim() || undefined,
+        message: ch.message,
+        signature: proofSignature,
+      });
+      // Lưu seed vào session (in-memory) ngay sau khi link để ký được trong phiên này
+      setSessionSeed(createdAddress, seed);
+      setCreateStep(3);
+      // Lưu seed vào session (in-memory, chết khi đóng tab) để ký được ngay trong phiên này
+      setSessionSeed(createdAddress, createdSeed.join(' '));
+      await loadWallets();
+      if (saved?.id) setActiveWalletId(saved.id); // auto-login vào ví vừa tạo
+      setLinkOpen(false);
+      setLinkAddress(''); setLinkLabel(''); setCreatedSeed([]); setCreatedAddress('');
+    } catch (err: any) {
+      alert('Lỗi liên kết ví: ' + err.message);
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  /** Mode "Liên kết ví có sẵn": yêu cầu chứng minh quyền sở hữu bằng chữ ký (không gửi seed lên server). */
+  const handleLinkExisting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!linkAddress.trim() || !linkNetwork) {
+      alert('Vui lòng nhập địa chỉ và chọn mạng');
+      return;
+    }
+    try {
+      setLinkLoading(true);
+      // 1. Người dùng phải mở khóa (nhập seed) để ký xác minh quyền sở hữu
+      const signer = await resolveSignerFor(linkAddress.trim(), true);
+      if (senderCanceledRef.current) { senderCanceledRef.current = false; return; }
+      if (!signer) return; // đóng modal hủy liên kết
+
+      // 2. Tạo challenge + ký → gửi bằng chứng lên server (seed không bao giờ rời trình duyệt)
+      const ch = await createOwnershipChallenge(linkAddress.trim());
+      const signature = signer.signMessageSync(ch.message);
+      await linkCryptoWalletWithProof({
         walletAddress: linkAddress.trim(),
         blockchainNetwork: linkNetwork,
         label: linkLabel.trim() || undefined,
+        message: ch.message,
+        signature,
       });
+
       await loadWallets();
       setLinkOpen(false);
       setLinkAddress(''); setLinkLabel('');
@@ -178,6 +255,16 @@ export function CryptoShell() {
       alert('Lỗi liên kết ví: ' + err.message);
     } finally {
       setLinkLoading(false);
+    }
+  };
+
+  /** Submit chung theo mode. */
+  const handleLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (linkMode === 'create') {
+      await handleCreateConfirm(e);
+    } else {
+      await handleLinkExisting(e);
     }
   };
 
@@ -234,17 +321,11 @@ export function CryptoShell() {
         if (parseFloat(sendAmount) > bal) throw new Error('Số dư không đủ!');
       }
 
-      // 2. Lấy private key cục bộ (non-custodial — backend không giữ key)
-      const pk = localStorage.getItem(`prime_pk_${activeWallet.walletAddress.toLowerCase()}`);
-      if (!pk) {
-        // Cho phép người dùng nhập private key tạm thời để ký
-        const entered = prompt('Ví này chưa có private key trong trình duyệt.\nNhập private key để ký giao dịch (chỉ lưu trong session này):');
-        if (!entered) throw new Error('Bạn đã hủy ký giao dịch');
-        // eslint-disable-next-line no-alert
-        signAndBroadcast(entered.trim());
-        return;
-      }
-      signAndBroadcast(pk);
+      // 2. Cần signer để ký — ưu tiên seed trong session; nếu chưa có → mở modal nhập seed
+      const signer = await resolveSignerFor(activeWallet.walletAddress, true);
+      if (senderCanceledRef.current) { senderCanceledRef.current = false; return; }
+      if (!signer) return; // người dùng đóng modal
+      await signAndBroadcast(signer);
     } catch (err: any) {
       alert('Lỗi gửi: ' + err.message);
     } finally {
@@ -252,16 +333,101 @@ export function CryptoShell() {
     }
   };
 
-  const signAndBroadcast = async (pk: string) => {
+  /**
+   * Lấy signer ethers cho một địa chỉ — KHÔNG đụng private key:
+   * - Ưu tiên seed đang giữ trong session (in-memory).
+   * - Nếu chưa có → mở modal "Nhập seed" để user nhập 12 từ (không gửi lên server).
+   *
+   * TRẢ VỀ DeferredPromise: khi người dùng nhập seed xong, promise được resolve
+   * bằng signer → luồng ký tiếp tục. Nếu người dùng đóng modal → reject (hủy ký).
+   */
+  const resolveSignerFor = async (address: string, requiresOwnership = false): Promise<ethers.HDNodeWallet | null> => {
+    const seed = getSessionSeed(address);
+    if (seed) {
+      try {
+        const w = ethers.Wallet.fromPhrase(seed);
+        if (w.address.toLowerCase() === address.toLowerCase()) return w;
+        clearSessionSeed(address);
+      } catch {
+        clearSessionSeed(address);
+      }
+    }
+    // Chưa mở khóa → nhờ user nhập seed, resolve sau khi unlock
+    return new Promise<ethers.HDNodeWallet | null>((resolve) => {
+      unlockResolveRef.current = resolve;
+      pendingSignRef.current = requiresOwnership;
+      setUnlockAddress(address);
+      setUnlockSeed('');
+      setUnlockError(null);
+      setUnlockOpen(true);
+    });
+  };
+
+  /** Ref để promise của resolveSignerFor được resolve/ reject từ handleUnlockSubmit. */
+  const unlockResolveRef = useRef<null | ((w: ethers.HDNodeWallet | null) => void)>(null);
+  const pendingSignRef = useRef(false);
+  /** Đánh dấu user đã hủy (đóng modal) trong luồng đang chờ mở khóa. */
+  const senderCanceledRef = useRef(false);
+
+  const handleUnlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const phrase = unlockSeed.trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ');
+    if (!phrase || phrase.split(' ').length < 12) {
+      setUnlockError('Vui lòng nhập đủ 12 từ seed phrase');
+      return;
+    }
+    setUnlockLoading(true);
+    setUnlockError(null);
+    try {
+      const wallet = ethers.Wallet.fromPhrase(phrase);
+      if (wallet.address.toLowerCase() !== unlockAddress.toLowerCase()) {
+        setUnlockError('Seed phrase không khớp với ví này. Kiểm tra lại 12 từ hoặc chọn đúng ví.');
+        return;
+      }
+      // Khớp → mở khóa phiên (in-memory)
+      setSessionSeed(unlockAddress, phrase);
+      if (pendingSignRef.current) confirmOwnership(unlockAddress, phrase);
+      setUnlockOpen(false);
+      unlockResolveRef.current?.(wallet);
+      unlockResolveRef.current = null;
+      setUnlockSeed('');
+    } catch {
+      setUnlockError('Seed phrase không hợp lệ (không phải BIP-39 hợp lệ)');
+    } finally {
+      setUnlockLoading(false);
+    }
+  };
+
+  /** Người dùng đóng modal → hủy luồng đang chờ ký. */
+  const handleUnlockClose = () => {
+    setUnlockOpen(false);
+    unlockResolveRef.current?.(null);
+    unlockResolveRef.current = null;
+  };
+
+  /** Xác minh quyền sở hữu với server (không gửi seed) sau khi mở khóa. */
+  const confirmOwnership = async (address: string, seed: string) => {
+    try {
+      const ch = await createOwnershipChallenge(address);
+      const wallet = ethers.Wallet.fromPhrase(seed);
+      const signature = wallet.signMessageSync(ch.message);
+      await verifyOwnership({ address, message: ch.message, signature });
+    } catch (err: any) {
+      // Không chặn luồng chính — chỉ cảnh báo
+      console.warn('Chưa xác minh được quyền sở hữu với server:', err.message);
+    }
+  };
+
+  const signAndBroadcast = async (wallet: ethers.HDNodeWallet | ethers.Wallet) => {
     if (!activeWallet || !sendTo || !sendAmount) return;
     try {
-      // 3. Lấy RPC URL từ mạng
-      const rpcUrl = getRpcUrlFor(activeWallet.blockchainNetwork);
+      // 3. Lấy RPC URL từ mạng (ưu tiên server cấp, fallback map cũ)
+      const rpcUrl = activeNetwork?.rpcUrl || getRpcUrlFor(activeWallet.blockchainNetwork);
       const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(pk, provider);
+      wallet = wallet.connect(provider);
 
       // 4. Chuẩn bị giao dịch
-      let tx;
+      let tx: ethers.TransactionRequest;
       if (!sendToken?.contractAddress) {
         // Native transfer
         tx = await wallet.populateTransaction({
@@ -333,10 +499,9 @@ export function CryptoShell() {
 
   const handleSign = async () => {
     try {
-      const pk = localStorage.getItem(`prime_pk_${sigAddress.toLowerCase()}`);
-      if (!pk) throw new Error('Không tìm thấy private key cho ví này. Hãy nhập qua bước tạo/import.');
-      const wallet = new ethers.Wallet(pk);
-      const signature = wallet.signMessageSync(challenge);
+      const signer = await resolveSignerFor(sigAddress, true);
+      if (!signer) return; // chưa mở khóa → modal đang mở, ký sau khi nhập seed
+      const signature = signer.signMessageSync(challenge);
       setSig(signature);
       await handleVerify(signature);
     } catch (err: any) {
@@ -714,23 +879,116 @@ export function CryptoShell() {
       )}
 
       {/* ===== Link modal ===== */}
-      <Modal isOpen={linkOpen} onClose={() => setLinkOpen(false)} title={linkMode === 'create' ? 'Tạo ví Crypto mới' : 'Liên kết ví có sẵn'}>
-        <form onSubmit={handleLink} className="space-y-6">
-          <div className="flex gap-1 p-1 rounded-xl bg-slate-900 border border-slate-800">
-            <button type="button" onClick={() => setLinkMode('link')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${linkMode === 'link' ? 'bg-violet-500/20 text-violet-300' : 'text-slate-400 hover:text-slate-200'}`}>
-              Liên kết
-            </button>
-            <button type="button" onClick={() => setLinkMode('create')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${linkMode === 'create' ? 'bg-violet-500/20 text-violet-300' : 'text-slate-400 hover:text-slate-200'}`}>
-              Tạo mới
-            </button>
-          </div>
+      <Modal isOpen={linkOpen} onClose={() => { setLinkOpen(false); setCreatedSeed([]); setCreateStep(1); }} title={linkMode === 'create' ? 'Tạo ví Crypto mới' : 'Liên kết ví có sẵn'}>
+        {linkMode === 'create' && createStep === 1 ? (
+          /* ==== Chọn mạng trước, rồi SINH seed phrase ==== */
+          <form onSubmit={handleCreateStart} className="space-y-6">
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-sm text-amber-400">
+              <p className="font-bold mb-1">⚠️ Testnet</p>
+              <p>Ví được tạo trên mạng testnet — tiền không có giá trị thật. Hãy dùng tài khoản gửi tiền thử (faucet) để kiểm tra.</p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Mạng blockchain</label>
+              <select
+                value={linkNetwork}
+                onChange={(e) => setLinkNetwork(e.target.value)}
+                className="w-full bg-slate-900 p-4 rounded-xl border border-slate-700 text-white outline-none focus:border-violet-500"
+                required
+              >
+                <option value="">Chọn mạng...</option>
+                {networks.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label} ({n.nativeSymbol}) {n.testnet ? '· Testnet' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Input
+              label="Tên ví (tùy chọn)"
+              value={linkLabel}
+              onChange={(e) => setLinkLabel(e.target.value)}
+              placeholder="VD: Ví chính, Ví tiết kiệm"
+              maxLength={60}
+            />
+            <Button type="submit" title="Sinh seed phrase" loading={linkLoading} className="bg-violet-600 hover:bg-violet-500 text-white" />
+          </form>
+        ) : linkMode === 'create' && createStep === 2 ? (
+          /* ==== BƯỚC 2: hiện seed phrase + private key 1 lần duy nhất ==== */
+          <div className="space-y-6">
+            <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-300">
+              <p className="font-bold mb-1">🔑 Đây là ví DUY NHẤT của bạn — hãy sao lưu!</p>
+              <p>Seed phrase và private key <b>chỉ hiển thị lần này</b>. PrimeWallet KHÔNG lưu chúng — nếu mất, không ai khôi phục được. Không bao giờ chia sẻ cho ai.</p>
+            </div>
 
-          {linkMode === 'create' ? (
-            <p className="text-sm text-slate-400 bg-violet-500/10 border border-violet-500/30 rounded-xl p-3">
-              Tạo ví mới: private key sẽ được sinh và lưu cục bộ trong trình duyệt (chỉ dùng cho demo).
-              Trong sản phẩm thật, hãy dùng ví cứng / MetaMask.
-            </p>
-          ) : (
+            <div>
+              <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2"><KeyRound className="w-4 h-4 text-violet-400" /> 1. Seed phrase (BIP-39, 12 từ)</p>
+              <div className="grid grid-cols-3 gap-2 bg-slate-900 border border-violet-500/30 rounded-xl p-4">
+                {createdSeed.map((word, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className="text-slate-600 font-mono">{i + 1}</span>
+                    <span className="font-bold text-white font-mono">{word}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={async () => { await navigator.clipboard.writeText(createdSeed.join(' ')); setSeedCopied(true); setTimeout(() => setSeedCopied(false), 2000); }}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-violet-400 hover:text-violet-300"
+              >
+                {seedCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {seedCopied ? 'Đã sao chép' : 'Sao chép seed phrase'}
+              </button>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Địa chỉ ví (Public key)</p>
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl p-3">
+                <p className="text-xs font-mono text-slate-300 break-all flex-1">{createdAddress}</p>
+                <button
+                  type="button"
+                  onClick={async () => { await navigator.clipboard.writeText(createdAddress); setSeedCopied(true); setTimeout(() => setSeedCopied(false), 2000); }}
+                  className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                  title="Sao chép địa chỉ"
+                >
+                  {seedCopied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">Địa chỉ này sẽ hiện trong app sau khi liên kết hoàn tất.</p>
+            </div>
+
+            <label className="flex items-start gap-3 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={savedChecked}
+                onChange={(e) => setSavedChecked(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-violet-500"
+              />
+              <span>Tôi đã sao lưu seed phrase và private key ở nơi an toàn (offline)</span>
+            </label>
+
+            <Button type="button" onClick={() => { setCreatedSeed([]); setCreatedAddress(''); setSavedChecked(false); setSeedCopied(false); setCreateStep(1); }} className="w-auto px-4 bg-slate-800 hover:bg-slate-700 text-slate-300" title="Quay lại">← Quay lại</Button>
+            <Button
+              onClick={handleCreateConfirm}
+              disabled={!savedChecked}
+              loading={linkLoading}
+              className="bg-violet-600 hover:bg-violet-500 text-white"
+              title="Liên kết ví"
+            >
+              {savedChecked ? 'Liên kết ví ✓' : 'Đánh dấu đã sao lưu để liên kết'}
+            </Button>
+          </div>
+        ) : (
+          /* ==== Mode "Liên kết ví có sẵn" hoặc bước 3 (đang link) ==== */
+          <form onSubmit={handleLink} className="space-y-6">
+            <div className="flex gap-1 p-1 rounded-xl bg-slate-900 border border-slate-800">
+              <button type="button" onClick={() => setLinkMode('link')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${linkMode === 'link' ? 'bg-violet-500/20 text-violet-300' : 'text-slate-400 hover:text-slate-200'}`}>
+                Liên kết
+              </button>
+              <button type="button" onClick={() => { setLinkMode('create'); setCreateStep(1); }} className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${linkMode === 'create' ? 'bg-violet-500/20 text-violet-300' : 'text-slate-400 hover:text-slate-200'}`}>
+                Tạo mới
+              </button>
+            </div>
+
             <Input
               label="Địa chỉ ví (0x...)"
               value={linkAddress}
@@ -739,34 +997,70 @@ export function CryptoShell() {
               pattern="^0x[a-fA-F0-9]{40}$"
               required
             />
-          )}
 
-          <div className="space-y-1">
-            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Mạng blockchain</label>
-            <select
-              value={linkNetwork}
-              onChange={(e) => setLinkNetwork(e.target.value)}
-              className="w-full bg-slate-900 p-4 rounded-xl border border-slate-700 text-white outline-none focus:border-violet-500"
-              required
-            >
-              <option value="">Chọn mạng...</option>
-              {networks.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.label} ({n.nativeSymbol}) {n.testnet ? '· Testnet' : ''}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Mạng blockchain</label>
+              <select
+                value={linkNetwork}
+                onChange={(e) => setLinkNetwork(e.target.value)}
+                className="w-full bg-slate-900 p-4 rounded-xl border border-slate-700 text-white outline-none focus:border-violet-500"
+                required
+              >
+                <option value="">Chọn mạng...</option>
+                {networks.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label} ({n.nativeSymbol}) {n.testnet ? '· Testnet' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <Input
+              label="Tên ví (tùy chọn)"
+              value={linkLabel}
+              onChange={(e) => setLinkLabel(e.target.value)}
+              placeholder="VD: Ví chính, Ví tiết kiệm"
+              maxLength={60}
+            />
+
+            <Button type="submit" loading={linkLoading} className="bg-violet-600 hover:bg-violet-500 text-white" title="Liên kết ví">
+              Liên kết ví
+            </Button>
+          </form>
+        )}
+      </Modal>
+
+      {/* ===== Unlock modal ===== */}
+      <Modal isOpen={unlockOpen} onClose={handleUnlockClose} title="Mở khóa ví">
+        <form onSubmit={handleUnlockSubmit} className="space-y-6">
+          <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-4 text-sm text-violet-300">
+            <p className="font-bold mb-1">🔐 Nhập seed phrase để mở khóa</p>
+            <p>Seed được giữ <b>chỉ trong phiên này</b> (in-memory) — không bao giờ gửi lên máy chủ. Đóng tab là phải nhập lại.</p>
           </div>
 
-          <Input
-            label="Tên ví (tùy chọn)"
-            value={linkLabel}
-            onChange={(e) => setLinkLabel(e.target.value)}
-            placeholder="VD: Ví chính, Ví tiết kiệm"
-            maxLength={60}
-          />
+          <div>
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+              12 từ seed phrase của ví <span className="font-mono normal-case text-violet-400">{shortAddr(unlockAddress)}</span>
+            </label>
+            <textarea
+              value={unlockSeed}
+              onChange={(e) => setUnlockSeed(e.target.value)}
+              rows={3}
+              placeholder="vd: abandon ability able about above absent absorb abstract absurd abuse access accident"
+              className="w-full bg-slate-900 p-4 rounded-xl border border-slate-700 text-white font-mono outline-none focus:border-violet-500 resize-none"
+              autoFocus
+            />
+            <p className="text-[11px] text-slate-500 mt-1.5">Nhập đủ 12 từ, có thể cách nhau bằng khoảng trắng.</p>
+          </div>
 
-          <Button type="submit" title={linkMode === 'create' ? 'Tạo & Liên kết' : 'Liên kết ví'} loading={linkLoading} className="bg-violet-600 hover:bg-violet-500 text-white" />
+          {unlockError && (
+            <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">{unlockError}</div>
+          )}
+
+          <Button type="submit" title="Mở khóa & tiếp tục" loading={unlockLoading} className="bg-violet-600 hover:bg-violet-500 text-white" />
+          <button type="button" onClick={handleUnlockClose} className="w-full text-sm text-slate-500 hover:text-slate-300 font-bold transition-colors">
+            Hủy
+          </button>
         </form>
       </Modal>
 

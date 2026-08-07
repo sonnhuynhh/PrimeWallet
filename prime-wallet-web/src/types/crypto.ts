@@ -9,6 +9,8 @@ export interface NetworkInfo {
   chainId: number;
   testnet: boolean;
   explorerUrl?: string;
+  /** RPC URL do server quản lý — client ký offline bằng URL này (không dùng RPC cứng). */
+  rpcUrl?: string;
 }
 
 /* ==================== WALLETS ==================== */

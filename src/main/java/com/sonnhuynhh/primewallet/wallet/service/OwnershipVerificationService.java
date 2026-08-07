@@ -69,9 +69,10 @@ public class OwnershipVerificationService {
             byte[] s = java.util.Arrays.copyOfRange(signatureBytes, 32, 64);
             byte v = signatureBytes[64];
 
-            // Chuyển v về dạng 0/1 (có thể 27/28)
-            if (v == 27 || v == 28) {
-                v -= 27;
+            // ethers.js sinh signature compact: byte cuối là 0/1 (hoặc 27/28).
+            // web3j 4.x signedMessageHashToKey YÊU CẦU v ∈ [27, 34] — chuẩn hóa về 27/28.
+            if (v < 27) {
+                v += 27;
             }
 
             Sign.SignatureData sigData = new Sign.SignatureData(v, r, s);
@@ -80,9 +81,17 @@ public class OwnershipVerificationService {
             byte[] messageHash = Hash.sha3(("Ethereum Signed Message:\n" + message.length() + message).getBytes());
 
             BigInteger publicKey = Sign.signedMessageHashToKey(messageHash, sigData);
-            String recoveredAddress = Keys.toChecksumAddress(
-                    "0x" + Numeric.toHexStringNoPrefix(publicKey).substring(24)
-            );
+            // web3j recoverFromSignature trả về x||y (64 bytes = 128 hex, đã bỏ 0x04).
+            // Ethereum address = 20 byte cuối của Keccak256(pubkey 64 byte không prefix).
+            String pubKeyHex = Numeric.toHexStringNoPrefix(publicKey);
+            // Pad về 128 hex nếu bị bỏ số 0 đầu (rare, nhưng an toàn)
+            if (pubKeyHex.length() < 128) {
+                pubKeyHex = "0".repeat(128 - pubKeyHex.length()) + pubKeyHex;
+            }
+            byte[] pubKeyBytes = Numeric.hexStringToByteArray(pubKeyHex);
+            byte[] hash = Hash.sha3(pubKeyBytes);
+            String addressHashHex = Numeric.toHexStringNoPrefix(hash); // 64 hex = 32 bytes
+            String recoveredAddress = Keys.toChecksumAddress("0x" + addressHashHex.substring(24));
 
             return recoveredAddress.equalsIgnoreCase(address);
 
