@@ -79,19 +79,20 @@ public class PaymentController {
 
     /**
      * API Return URL
-     * VNPAY sẽ chuyển hướng trình duyệt của người dùng về đây sau khi thanh toán xong.
-     * Để tiện test ở localhost (không có Ngrok), ta cho Return URL xử lý luôn giao dịch như IPN.
+     * VNPAY chuyển hướng TRÌNH DUYỆT của người dùng về đây sau khi thanh toán xong.
+     *
+     * Fix #4: Endpoint này CHỈ HIỂN THỊ trạng thái cho người dùng, KHÔNG cộng tiền.
+     * Việc cộng tiền vào ví CHỈ được thực hiện qua webhook server-to-server /ipn
+     * (đã xác thực chữ ký + idempotent). Đây là chuẩn an toàn cho cổng thanh toán:
+     * không bao giờ chuyển tiền dựa trên một redirect từ trình duyệt.
      */
     @GetMapping("/return")
     public ResponseEntity<String> vnpayReturn(@RequestParam Map<String, String> params) {
-        // Xử lý giao dịch
-        paymentService.processIpn(params);
-        
+        String message = paymentService.handleReturnDisplay(params);
         String vnp_ResponseCode = params.get("vnp_ResponseCode");
         if ("00".equals(vnp_ResponseCode)) {
-            return ResponseEntity.ok("Thanh toán thành công! Tiền đã được nạp vào ví của bạn. Vui lòng quay lại ứng dụng.");
-        } else {
-            return ResponseEntity.badRequest().body("Giao dịch thất bại hoặc bị hủy. Mã lỗi: " + vnp_ResponseCode);
+            return ResponseEntity.ok(message);
         }
+        return ResponseEntity.badRequest().body(message);
     }
 }

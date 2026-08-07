@@ -2,6 +2,7 @@ package com.sonnhuynhh.primewallet.config;
 
 import com.sonnhuynhh.primewallet.auth.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -17,6 +18,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.Arrays;
 
 /**
  * Cấu hình bảo mật cho toàn bộ ứng dụng.
@@ -39,11 +45,17 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final UserDetailsService userDetailsService;
 
+    @Value("${cors.allowed-origins:http://localhost:19006,http://localhost:8081}")
+    private String allowedOrigins;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 // 1. Tắt CSRF vì ta dùng JWT (stateless), không dùng cookie
                 .csrf(csrf -> csrf.disable())
+
+                // 2. Bật CORS với cấu hình tùy chỉnh (Fix #13)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
 
                 // 2. Cấu hình quyền truy cập API
                 .authorizeHttpRequests(auth -> auth
@@ -103,6 +115,36 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
+    }
+
+    /**
+     * CORS Configuration Source (Fix #13).
+     *
+     * CORS (Cross-Origin Resource Sharing) cho phép React Native app (chạy trên
+     * Expo dev server http://localhost:19006) gọi API backend (http://localhost:8080).
+     *
+     * Mặc định browsers chặn cross-origin requests vì lý do bảo mật.
+     * Ta phải BẬT CORS và CHỈ ĐỊNH các origin được phép.
+     *
+     * Cấu hình này:
+     * - Cho phép các origin từ biến môi trường (dev: localhost:19006, prod: domain thật)
+     * - Cho phép credentials (cookies, JWT trong header)
+     * - Cho phép các HTTP methods cần thiết (GET, POST, PUT, DELETE, OPTIONS)
+     * - Cho phép các headers cần thiết (Authorization cho JWT, Content-Type)
+     * - Áp dụng cho TẤT CẢ các API endpoint (/api/**)
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Accept"));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L); // Preflight cache 1 hour
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", configuration);
+        return source;
     }
 
     /**
