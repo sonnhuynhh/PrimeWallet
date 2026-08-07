@@ -187,6 +187,14 @@ public class CryptoWalletService {
         return wallet;
     }
 
+    /**
+     * Tìm ví của user theo địa chỉ (dùng khi gửi giao dịch để lưu lịch sử).
+     */
+    public CryptoWallet findByOwnerAndAddress(UUID userId, String walletAddress) {
+        return cryptoWalletRepository.findByWalletAddressAndUser_Id(walletAddress, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví với địa chỉ " + walletAddress));
+    }
+
     // ==================== HELPERS ====================
 
     private BigInteger fetchNativeBalance(String address, BlockchainNetwork network) {

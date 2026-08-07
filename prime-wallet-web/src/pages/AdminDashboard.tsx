@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
 import { ShieldAlert, Users, Lock, Unlock, CheckCircle, XCircle, RefreshCw, FileText, ChevronLeft, ChevronRight, LayoutDashboard, Search, Bitcoin } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getAllUsers, updateKycStatus, lockUser, unlockUser, getAuditLogs, runReconciliation, getAdminCryptoHistory } from '../services/admin';

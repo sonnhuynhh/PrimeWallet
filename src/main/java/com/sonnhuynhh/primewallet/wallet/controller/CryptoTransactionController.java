@@ -7,16 +7,24 @@ import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
 import com.sonnhuynhh.primewallet.common.service.AuditService;
 import com.sonnhuynhh.primewallet.config.Web3jProvider;
 import com.sonnhuynhh.primewallet.wallet.dto.*;
+import com.sonnhuynhh.primewallet.wallet.entity.CryptoTransaction;
 import com.sonnhuynhh.primewallet.wallet.enums.BlockchainNetwork;
+import com.sonnhuynhh.primewallet.wallet.event.TransactionEvent;
+import com.sonnhuynhh.primewallet.wallet.event.TransactionEventPublisher;
+import com.sonnhuynhh.primewallet.wallet.service.CryptoWalletService;
 import com.sonnhuynhh.primewallet.wallet.service.GasEstimationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.web3j.protocol.core.methods.response.EthGasPrice;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
@@ -30,12 +38,15 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/crypto/transactions")
 @RequiredArgsConstructor
+@Slf4j
 public class CryptoTransactionController {
 
     private final Web3jProvider web3jProvider;
     private final GasEstimationService gasEstimationService;
     private final AuditService auditService;
     private final UserRepository userRepository;
+    private final CryptoWalletService cryptoWalletService;
+    private final TransactionEventPublisher transactionEventPublisher;
 
     private UUID getUserId(Authentication authentication) {
         String email = authentication.getName();
@@ -114,6 +125,89 @@ public class CryptoTransactionController {
         } catch (Exception e) {
             throw new RuntimeException("Failed to broadcast transaction — " + e.getMessage(), e);
         }
+    }
+
+    // ==================== SEND (broadcast + persist + kafka) ====================
+
+    /**
+     * Gửi token/native coin: broadcast signed tx, lưu vào lịch sử in-app,
+     * phát event Kafka cho AI service. Non-custodial — client ký offline.
+     */
+    @PostMapping("/send")
+    public ResponseEntity<ApiResponse<SendTransactionResponse>> sendToken(
+            Authentication authentication,
+            @Valid @RequestBody SendTokenRequest request) {
+
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(request.getBlockchainNetwork());
+        UUID userId = getUserId(authentication);
+
+        // 1. Broadcast signed tx lên mạng
+        EthSendTransaction ethSendTransaction;
+        try {
+            ethSendTransaction = web3jProvider.getWeb3j(network)
+                    .ethSendRawTransaction(request.getSignedTransactionHex()).send();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to broadcast transaction — " + e.getMessage(), e);
+        }
+
+        String status;
+        String txHash = null;
+        if (ethSendTransaction.hasError()) {
+            status = "FAILED";
+            throw new RuntimeException("Lỗi broadcast: " + ethSendTransaction.getError().getMessage());
+        }
+        txHash = ethSendTransaction.getTransactionHash();
+        status = "PENDING";
+
+        // 2. Lưu giao dịch vào lịch sử in-app (để UI hiển thị)
+        BigDecimal amount = new BigDecimal(request.getAmount());
+        CryptoTransaction tx = CryptoTransaction.builder()
+                .wallet(cryptoWalletService.findByOwnerAndAddress(userId, request.getFromAddress()))
+                .blockchainNetwork(network.getId())
+                .type("SEND")
+                .txHash(txHash)
+                .fromAddress(request.getFromAddress())
+                .toAddress(request.getToAddress())
+                .amount(amount)
+                .symbol(request.getSymbol())
+                .tokenAddress(request.getTokenAddress() != null && !request.getTokenAddress().isBlank()
+                        ? request.getTokenAddress() : null)
+                .status(status)
+                .description("Gửi " + request.getAmount() + " " + request.getSymbol()
+                        + " trên " + network.getLabel())
+                .build();
+
+        CryptoTransaction saved = cryptoWalletService.saveTransaction(tx);
+
+        // 3. Phát event Kafka — AI service tiêu thụ để tính risk score
+        try {
+            transactionEventPublisher.publish(TransactionEvent.builder()
+                    .transactionId(saved.getId())
+                    .referenceNumber("CRYPTO-" + txHash)
+                    .transactionType("CRYPTO_SEND")
+                    .sourceAccountNumber(request.getFromAddress())
+                    .destinationAccountNumber(request.getToAddress())
+                    .amount(amount)
+                    .currency(request.getSymbol())
+                    .status(status)
+                    .description("Gửi " + request.getAmount() + " " + request.getSymbol()
+                            + " trên " + network.getLabel())
+                    .timestamp(LocalDateTime.now().toString())
+                    .build());
+        } catch (Exception e) {
+            log.warn("Không gửi được Kafka event cho crypto tx: {}", e.getMessage());
+        }
+
+        auditService.log(userId, "SEND_CRYPTO_TX",
+                "Gửi " + request.getAmount() + " " + request.getSymbol()
+                        + " trên " + network.getLabel() + " (Hash: " + txHash + ")", null);
+
+        return ResponseEntity.ok(ApiResponse.success("Giao dịch đã được đẩy lên mạng",
+                SendTransactionResponse.builder()
+                        .transactionHash(txHash)
+                        .transactionId(saved.getId())
+                        .status(status)
+                        .build()));
     }
 
     // ==================== HELPERS ====================
