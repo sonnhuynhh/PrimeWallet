@@ -61,10 +61,12 @@ public class AdminService {
      * Lấy danh sách audit log.
      * Có thể lọc theo user cụ thể.
      */
-    public Page<AuditLogResponse> getAuditLogs(Pageable pageable, UUID userId) {
+    public Page<AuditLogResponse> getAuditLogs(Pageable pageable, UUID userId, String q) {
         Page<AuditLog> logs;
         if (userId != null) {
             logs = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
+        } else if (q != null && !q.isBlank()) {
+            logs = auditLogRepository.search(q.trim(), pageable);
         } else {
             // Không có method findAllOrderByCreatedAtDesc sẵn, ta dùng findAll rồi set sort trong Pageable ở Controller
             logs = auditLogRepository.findAll(pageable);
@@ -98,11 +100,26 @@ public class AdminService {
      * @Transactional(readOnly = true): giữ Hibernate session mở trong lúc map entity → DTO.
      * sourceAccount / destinationAccount là LAZY (open-in-view=false) — nếu map bên ngoài
      * transaction sẽ ném LazyInitializationException (đã gặp lỗi này trước khi thêm annotation).
+     *
+     * q: từ khóa tìm kiếm (mã GD / số ví nguồn-đích / mô tả). Rỗng → lấy hết.
+     * type: lọc theo loại giao dịch (TOPUP, WITHDRAW, TRANSFER, PAYMENT). Rỗng = tất cả.
+     * status: lọc theo trạng thái (PENDING, SUCCESS, FAILED, REVERSED). Rỗng = tất cả.
      */
     @Transactional(readOnly = true)
-    public Page<TransactionResponse> getAllTransactions(Pageable pageable) {
-        return transactionRepository.findAll(pageable)
-                .map(this::toTransactionResponse);
+    public Page<TransactionResponse> getAllTransactions(
+            Pageable pageable, String q, String type, String status) {
+        Page<Transaction> transactions;
+
+        if (q != null && !q.isBlank()) {
+            transactions = transactionRepository.search(q.trim(), pageable);
+        } else if (type != null && !type.isBlank() && status != null && !status.isBlank()) {
+            transactions = transactionRepository.findByTransactionTypeAndStatus(
+                    TransactionType.valueOf(type), TransactionStatus.valueOf(status), pageable);
+        } else {
+            transactions = transactionRepository.findAll(pageable);
+        }
+
+        return transactions.map(this::toTransactionResponse);
     }
 
     /**
@@ -177,7 +194,12 @@ public class AdminService {
      * - totalPages: Tổng số trang
      * - number: Trang hiện tại (0-indexed)
      */
-    public Page<AdminUserResponse> getAllUsers(Pageable pageable) {
+    public Page<AdminUserResponse> getAllUsers(Pageable pageable, String q) {
+        // q rỗng → liệt kê hết; có q → tìm theo email / SĐT / họ tên
+        if (q != null && !q.isBlank()) {
+            return userRepository.search(q.trim(), pageable)
+                    .map(this::toAdminUserResponse);
+        }
         // .map() chuyển đổi từ Page<User> → Page<AdminUserResponse>
         return userRepository.findAll(pageable)
                 .map(this::toAdminUserResponse);

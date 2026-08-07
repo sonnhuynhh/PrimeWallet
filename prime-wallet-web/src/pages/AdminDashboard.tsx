@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { ShieldAlert, Users, Lock, Unlock, CheckCircle, XCircle, RefreshCw, FileText, ChevronLeft, ChevronRight, LayoutDashboard, Search, Bitcoin, ArrowLeftRight, User, Wallet, ReceiptText, ArrowDownToLine, ArrowUpFromLine, Send } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getAllUsers, updateKycStatus, lockUser, unlockUser, getAuditLogs, runReconciliation, getAdminCryptoHistory, getAdminTransactions, getAdminStats } from '../services/admin';
@@ -53,17 +53,30 @@ export function AdminDashboard() {
   const [cryptoHistory, setCryptoHistory] = useState<import('../services/crypto').EtherscanTransaction[]>([]);
   const [cryptoLoading, setCryptoLoading] = useState(false);
 
+  // Tìm kiếm từng tab
+  const [userQuery, setUserQuery] = useState('');
+  const [logQuery, setLogQuery] = useState('');
+  const [txQuery, setTxQuery] = useState('');
+  const [txType, setTxType] = useState('');
+  const [txStatus, setTxStatus] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const fetchData = async (page: number) => {
     try {
       setLoading(true);
       if (activeTab === 'users') {
-        const data = await getAllUsers(page, 20);
+        const data = await getAllUsers(page, 20, userQuery.trim() || undefined);
         setUsersPage(data);
       } else if (activeTab === 'transactions') {
-        const data = await getAdminTransactions(page, 20);
+        const data = await getAdminTransactions(
+          page, 20,
+          txQuery.trim() || undefined,
+          txType || undefined,
+          txStatus || undefined
+        );
         setTxPage(data);
       } else {
-        const data = await getAuditLogs(page, 20);
+        const data = await getAuditLogs(page, 20, undefined, logQuery.trim() || undefined);
         setLogsPage(data);
       }
       setCurrentPage(page);
@@ -72,6 +85,12 @@ export function AdminDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  /** Debounce: chờ user gõ xong 400ms rồi mới gọi API — tránh spam request mỗi ký tự. */
+  const debouncedFetch = (page: number) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => fetchData(page), 400);
   };
 
   const loadStats = async () => {
@@ -182,9 +201,6 @@ export function AdminDashboard() {
             <Button onClick={handleReconcile} loading={reconciling} className="w-auto flex items-center gap-2 bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.3)]" title="Chạy Đối Soát">
               Chạy Đối Soát
             </Button>
-            <Button variant="secondary" onClick={() => window.location.href = '/'} className="w-auto flex items-center gap-2" title="Quay lại Ví">
-              Quay lại Ví
-            </Button>
           </div>
         </div>
 
@@ -224,17 +240,17 @@ export function AdminDashboard() {
               <p className="text-slate-400 text-sm">Nhập địa chỉ ví Web3 bất kỳ để xem toàn bộ lịch sử giao dịch (Không giới hạn quyền sở hữu).</p>
             </div>
             
-            <form onSubmit={handleSearchCrypto} className="flex gap-4 mb-6">
+            <form onSubmit={handleSearchCrypto} className="flex gap-3 mb-6">
               <input
                 type="text"
                 placeholder="Ví dụ: 0x123..."
                 value={cryptoAddress}
                 onChange={e => setCryptoAddress(e.target.value)}
-                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
                 required
               />
-              <Button loading={cryptoLoading} type="submit" className="w-auto px-8 bg-violet-600 hover:bg-violet-500 shadow-[0_0_15px_rgba(139,92,246,0.3)]" title="Tra cứu">
-                <Search className="w-5 h-5 mr-2" /> Tra cứu
+              <Button loading={cryptoLoading} type="submit" className="w-auto px-5 bg-violet-600 hover:bg-violet-500 shadow-[0_0_15px_rgba(139,92,246,0.3)]" title="Tra cứu">
+                <Search className="w-4 h-4 mr-1.5" /> Tra cứu
               </Button>
             </form>
 
@@ -314,7 +330,7 @@ export function AdminDashboard() {
             </div>
 
             <Card>
-              <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                   <><ArrowLeftRight className="w-5 h-5 text-emerald-400" /> Giao dịch toàn hệ thống</>
                 </h2>
@@ -322,6 +338,41 @@ export function AdminDashboard() {
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                   Tải lại
                 </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-3 mb-5">
+                <div className="relative flex-1 min-w-[240px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="Tìm theo mã GD, số ví nguồn/đích, mô tả..."
+                    value={txQuery}
+                    onChange={e => { setTxQuery(e.target.value); debouncedFetch(0); }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-4 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+                <select
+                  value={txType}
+                  onChange={e => { setTxType(e.target.value); debouncedFetch(0); }}
+                  className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Tất cả loại</option>
+                  <option value="TOPUP">Nạp</option>
+                  <option value="WITHDRAW">Rút</option>
+                  <option value="TRANSFER">Chuyển</option>
+                  <option value="PAYMENT">Thanh toán</option>
+                </select>
+                <select
+                  value={txStatus}
+                  onChange={e => { setTxStatus(e.target.value); debouncedFetch(0); }}
+                  className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Tất cả trạng thái</option>
+                  <option value="SUCCESS">SUCCESS</option>
+                  <option value="PENDING">PENDING</option>
+                  <option value="FAILED">FAILED</option>
+                  <option value="REVERSED">REVERSED</option>
+                </select>
               </div>
 
               <div className="overflow-x-auto">
@@ -384,6 +435,30 @@ export function AdminDashboard() {
                 Tải lại
               </Button>
             </div>
+
+            {activeTab === 'users' ? (
+              <div className="relative mb-5 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Tìm theo email, SĐT, họ tên..."
+                  value={userQuery}
+                  onChange={e => { setUserQuery(e.target.value); debouncedFetch(0); }}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-4 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+            ) : (
+              <div className="relative mb-5 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Tìm theo hành động, chi tiết..."
+                  value={logQuery}
+                  onChange={e => { setLogQuery(e.target.value); debouncedFetch(0); }}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-4 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+            )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">

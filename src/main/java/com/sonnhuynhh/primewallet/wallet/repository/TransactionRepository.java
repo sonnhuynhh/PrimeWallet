@@ -40,6 +40,32 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     Optional<Transaction> findByReferenceNumber(String referenceNumber);
 
     /**
+     * Tìm giao dịch theo từ khóa (phân trang) — dành cho Admin.
+     * Khớp chủ yếu theo: mã tham chiếu, số tài khoản nguồn, số tài khoản đích, mô tả.
+     * LIKE '%keyword%' — không phân biệt hoa thường, tìm chứa keyword (hữu ích khi admin
+     * chỉ nhớ một phần mã GD như "TXN2026" hoặc mảnh số ví "PW123").
+     *
+     * l.status LÀ LAZY — nhưng đây là BIND trong SQL, không phải access ở Java,
+     * nên KHÔNG gây LazyInitializationException.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT t FROM Transaction t WHERE LOWER(t.referenceNumber) LIKE LOWER(CONCAT('%', :q, '%')) " +
+            "OR t.sourceAccount.accountNumber LIKE CONCAT('%', :q, '%') " +
+            "OR t.destinationAccount.accountNumber LIKE CONCAT('%', :q, '%') " +
+            "OR LOWER(t.description) LIKE LOWER(CONCAT('%', :q, '%'))")
+    org.springframework.data.domain.Page<Transaction> search(
+            @org.springframework.data.repository.query.Param("q") String q,
+            org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * Tìm giao dịch theo loại và trạng thái (Admin) — dùng khi lọc rõ ràng.
+     */
+    org.springframework.data.domain.Page<Transaction> findByTransactionTypeAndStatus(
+            com.sonnhuynhh.primewallet.wallet.enums.TransactionType type,
+            com.sonnhuynhh.primewallet.wallet.enums.TransactionStatus status,
+            org.springframework.data.domain.Pageable pageable);
+
+    /**
      * Tính tổng số tiền giao dịch theo loại, trạng thái và khoảng thời gian.
      */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.transactionType = :type AND t.status = :status AND t.createdAt >= :startDate AND t.createdAt < :endDate")

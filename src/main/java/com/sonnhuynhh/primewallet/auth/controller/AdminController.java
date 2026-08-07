@@ -67,19 +67,22 @@ public class AdminController {
      */
     @GetMapping("/users")
     public ResponseEntity<ApiResponse<Page<AdminUserResponse>>> getAllUsers(
+            @RequestParam(required = false) String q,
             @PageableDefault(size = 20) Pageable pageable) {
-        Page<AdminUserResponse> users = adminService.getAllUsers(pageable);
+        Page<AdminUserResponse> users = adminService.getAllUsers(pageable, q);
         return ResponseEntity.ok(ApiResponse.success("Danh sách người dùng", users));
     }
 
     /**
      * Lấy danh sách audit logs.
+     * Có thể lọc theo user cụ thể hoặc tìm theo từ khóa (hành động / chi tiết).
      */
     @GetMapping("/logs")
     public ResponseEntity<ApiResponse<Page<AuditLogResponse>>> getAuditLogs(
             @RequestParam(required = false) UUID userId,
+            @RequestParam(required = false) String q,
             @PageableDefault(size = 50, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        Page<AuditLogResponse> logs = adminService.getAuditLogs(pageable, userId);
+        Page<AuditLogResponse> logs = adminService.getAuditLogs(pageable, userId, q);
         return ResponseEntity.ok(ApiResponse.success("Lịch sử hệ thống", logs));
     }
 
@@ -87,13 +90,18 @@ public class AdminController {
      * Lấy toàn bộ giao dịch trên hệ thống (phân trang).
      *
      * GET /api/v1/admin/transactions?page=0&size=20
+     * GET /api/v1/admin/transactions?q=TXN2026          → tìm theo mã / số ví / mô tả
+     * GET /api/v1/admin/transactions?type=TOPUP&status=SUCCESS → lọc theo loại + trạng thái
      *
      * Đọc-only. Sắp xếp mặc định theo createdAt mới nhất trước.
      */
     @GetMapping("/transactions")
     public ResponseEntity<ApiResponse<Page<TransactionResponse>>> getAllTransactions(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String status,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        Page<TransactionResponse> transactions = adminService.getAllTransactions(pageable);
+        Page<TransactionResponse> transactions = adminService.getAllTransactions(pageable, q, type, status);
         return ResponseEntity.ok(ApiResponse.success("Danh sách giao dịch", transactions));
     }
 

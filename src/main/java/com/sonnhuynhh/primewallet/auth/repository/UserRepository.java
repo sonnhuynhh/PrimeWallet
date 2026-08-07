@@ -42,4 +42,17 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      * Dùng khi đăng ký để tránh trùng SĐT.
      */
     boolean existsByPhone(String phone);
+
+    /**
+     * Tìm kiếm user theo từ khóa (phân trang).
+     * Dùng cho Admin tra cứu nhanh: email, số điện thoại HOẶC họ tên (không phân biệt hoa thường).
+     * LIKE '%keyword%' — tìm chứa keyword, không chỉ khớp đầu chuỗi.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT u FROM User u WHERE LOWER(u.email) LIKE LOWER(CONCAT('%', :q, '%')) " +
+            "OR LOWER(u.phone) LIKE LOWER(CONCAT('%', :q, '%')) " +
+            "OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', :q, '%'))")
+    org.springframework.data.domain.Page<User> search(
+            @org.springframework.data.repository.query.Param("q") String q,
+            org.springframework.data.domain.Pageable pageable);
 }

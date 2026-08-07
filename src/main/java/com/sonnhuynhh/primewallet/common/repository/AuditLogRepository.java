@@ -28,4 +28,16 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
      * Dùng khi muốn xem tất cả hành động LOGIN_FAILED để phát hiện brute-force.
      */
     Page<AuditLog> findByActionOrderByCreatedAtDesc(String action, Pageable pageable);
+
+    /**
+     * Tìm log theo từ khóa (phân trang).
+     * Dùng cho Admin tra cứu nhanh: hành động HOẶC chi tiết (không phân biệt hoa thường).
+     * LIKE '%keyword%' — tìm chứa keyword.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT l FROM AuditLog l WHERE LOWER(l.action) LIKE LOWER(CONCAT('%', :q, '%')) " +
+            "OR LOWER(l.detail) LIKE LOWER(CONCAT('%', :q, '%'))")
+    Page<AuditLog> search(
+            @org.springframework.data.repository.query.Param("q") String q,
+            Pageable pageable);
 }

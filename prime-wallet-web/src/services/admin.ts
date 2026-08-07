@@ -18,8 +18,9 @@ export type Page<T> = {
   number: number;
 };
 
-export async function getAllUsers(page = 0, size = 20) {
-  return request<Page<AdminUserResponse>>(`/api/v1/admin/users?page=${page}&size=${size}`);
+export async function getAllUsers(page = 0, size = 20, q?: string) {
+  const query = q ? `&q=${encodeURIComponent(q)}` : "";
+  return request<Page<AdminUserResponse>>(`/api/v1/admin/users?page=${page}&size=${size}${query}`);
 }
 
 export async function getUserById(id: string) {
@@ -52,9 +53,11 @@ export async function runReconciliation(dateStr?: string) {
   });
 }
 
-export async function getAuditLogs(page = 0, size = 50, userId?: string) {
-  const query = userId ? `?userId=${userId}&page=${page}&size=${size}` : `?page=${page}&size=${size}`;
-  return request<Page<import('../types/api').AuditLogResponse>>(`/api/v1/admin/logs${query}`);
+export async function getAuditLogs(page = 0, size = 50, userId?: string, q?: string) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (userId) params.set("userId", userId);
+  if (q) params.set("q", q);
+  return request<Page<import('../types/api').AuditLogResponse>>(`/api/v1/admin/logs?${params.toString()}`);
 }
 
 export async function getAdminCryptoHistory(address: string) {
@@ -70,9 +73,13 @@ export type AdminStats = {
   totalTransfer: string;
 };
 
-export async function getAdminTransactions(page = 0, size = 20) {
+export async function getAdminTransactions(page = 0, size = 20, q?: string, type?: string, status?: string) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (q) params.set("q", q);
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
   return request<Page<import('../types/api').TransactionResponse>>(
-    `/api/v1/admin/transactions?page=${page}&size=${size}`
+    `/api/v1/admin/transactions?${params.toString()}`
   );
 }
 
