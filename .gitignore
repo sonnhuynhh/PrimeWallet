@@ -35,3 +35,9 @@ build/
 ### Sensitive Config Files ###
 src/main/resources/application-local.properties
 .env
+
+### Logs & Dumps ###
+startup_log.txt
+crash_log.txt
+diff.txt
+*.log

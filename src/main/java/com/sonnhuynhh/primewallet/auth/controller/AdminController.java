@@ -6,12 +6,17 @@ import com.sonnhuynhh.primewallet.auth.service.AdminService;
 import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
 import com.sonnhuynhh.primewallet.wallet.entity.DailyReport;
 import com.sonnhuynhh.primewallet.wallet.service.ReconciliationService;
+import com.sonnhuynhh.primewallet.wallet.service.EtherscanService;
+import com.sonnhuynhh.primewallet.wallet.dto.EtherscanResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
+
+import com.sonnhuynhh.primewallet.common.dto.AuditLogResponse;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -48,6 +53,7 @@ public class AdminController {
 
     private final AdminService adminService;
     private final ReconciliationService reconciliationService;
+    private final EtherscanService etherscanService;
 
     /**
      * Lấy danh sách tất cả user (phân trang).
@@ -62,6 +68,17 @@ public class AdminController {
             @PageableDefault(size = 20) Pageable pageable) {
         Page<AdminUserResponse> users = adminService.getAllUsers(pageable);
         return ResponseEntity.ok(ApiResponse.success("Danh sách người dùng", users));
+    }
+
+    /**
+     * Lấy danh sách audit logs.
+     */
+    @GetMapping("/logs")
+    public ResponseEntity<ApiResponse<Page<AuditLogResponse>>> getAuditLogs(
+            @RequestParam(required = false) UUID userId,
+            @PageableDefault(size = 50, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        Page<AuditLogResponse> logs = adminService.getAuditLogs(pageable, userId);
+        return ResponseEntity.ok(ApiResponse.success("Lịch sử hệ thống", logs));
     }
 
     /**
@@ -130,5 +147,15 @@ public class AdminController {
 
         DailyReport report = reconciliationService.runReconciliationForDate(date);
         return ResponseEntity.ok(ApiResponse.success("Đối soát hoàn tất", report));
+    }
+
+    /**
+     * Tra cứu lịch sử giao dịch Crypto qua Etherscan.
+     */
+    @GetMapping("/crypto/history")
+    public ResponseEntity<ApiResponse<EtherscanResponse>> getCryptoHistory(
+            @RequestParam String address) {
+        EtherscanResponse response = etherscanService.getTransactionHistory(address);
+        return ResponseEntity.ok(ApiResponse.success("Lịch sử giao dịch ví", response));
     }
 }

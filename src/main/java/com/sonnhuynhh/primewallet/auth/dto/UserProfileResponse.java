@@ -50,4 +50,7 @@ public class UserProfileResponse {
 
     /** Ngày tạo tài khoản */
     private LocalDateTime createdAt;
+    
+    /** Quyền của user: USER, ADMIN */
+    private String role;
 }

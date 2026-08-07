@@ -6,6 +6,7 @@ import com.sonnhuynhh.primewallet.wallet.enums.TransactionType;
 import com.sonnhuynhh.primewallet.wallet.repository.DailyReportRepository;
 import com.sonnhuynhh.primewallet.wallet.repository.LedgerEntryRepository;
 import com.sonnhuynhh.primewallet.wallet.repository.TransactionRepository;
+import com.sonnhuynhh.primewallet.common.service.AuditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.UUID;
 
 /**
  * Service Đối soát dữ liệu (Reconciliation).
@@ -29,6 +31,7 @@ public class ReconciliationService {
     private final TransactionRepository transactionRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
     private final DailyReportRepository dailyReportRepository;
+    private final AuditService auditService;
 
     /**
      * Tự động chạy đối soát vào 2:00 sáng mỗi ngày.
@@ -96,7 +99,16 @@ public class ReconciliationService {
         report.setTotalLedgerChange(totalLedgerChange);
         report.setStatus(status);
         report.setNotes(notes);
+        
+        DailyReport savedReport = dailyReportRepository.save(report);
 
-        return dailyReportRepository.save(report);
+        // Ghi Audit Log để hiển thị trên Dashboard
+        UUID systemId = UUID.fromString("00000000-0000-0000-0000-000000000000"); // System UUID
+        String logMessage = "MATCHED".equals(status) 
+                ? String.format("Đối soát ngày %s: Khớp số liệu. Nạp: %s, Rút: %s", date, totalTopUp, totalWithdraw)
+                : String.format("Đối soát ngày %s: LỆCH SỐ LIỆU! %s", date, notes);
+        auditService.log(systemId, "RECONCILE", logMessage, null);
+
+        return savedReport;
     }
 }
