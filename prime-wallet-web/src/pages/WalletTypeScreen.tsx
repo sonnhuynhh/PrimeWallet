@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Wallet, Bitcoin, ShieldCheck, Globe, TrendingUp, Timer, LogOut } from 'lucide-react';
+import { Wallet, Bitcoin, ShieldCheck, Globe, TrendingUp, Timer, LogOut, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
@@ -40,6 +40,15 @@ export function WalletTypeScreen() {
             <p className="text-sm font-bold text-white">{session?.profile.fullName}</p>
             <p className="text-xs text-slate-500">{session?.profile.email}</p>
           </div>
+          {session?.auth?.role === 'ADMIN' && (
+            <button
+              onClick={() => navigate('/admin')}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors"
+              title="Quản trị hệ thống"
+            >
+              <ShieldAlert className="w-4 h-4" /> Quản trị
+            </button>
+          )}
           <button
             onClick={signOut}
             className="p-2.5 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors"

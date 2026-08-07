@@ -1,17 +1,49 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldAlert, Users, Lock, Unlock, CheckCircle, XCircle, RefreshCw, FileText, ChevronLeft, ChevronRight, LayoutDashboard, Search, Bitcoin } from 'lucide-react';
+import { ShieldAlert, Users, Lock, Unlock, CheckCircle, XCircle, RefreshCw, FileText, ChevronLeft, ChevronRight, LayoutDashboard, Search, Bitcoin, ArrowLeftRight, User, Wallet, ReceiptText, ArrowDownToLine, ArrowUpFromLine, Send } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getAllUsers, updateKycStatus, lockUser, unlockUser, getAuditLogs, runReconciliation, getAdminCryptoHistory } from '../services/admin';
-import type { AdminUserResponse, Page } from '../services/admin';
-import type { AuditLogResponse } from '../types/api';
+import { getAllUsers, updateKycStatus, lockUser, unlockUser, getAuditLogs, runReconciliation, getAdminCryptoHistory, getAdminTransactions, getAdminStats } from '../services/admin';
+import type { AdminUserResponse, Page, AdminStats } from '../services/admin';
+import type { AuditLogResponse, TransactionResponse } from '../types/api';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 
+const fmtVnd = (v: string | number | null | undefined) => `${Number(v || 0).toLocaleString('vi-VN')} VND`;
+const fmtNum = (v: number | null | undefined) => (v ?? 0).toLocaleString('vi-VN');
+
+function txBadge(type: string) {
+  const map: Record<string, { cls: string; label: string }> = {
+    TOPUP: { cls: 'bg-emerald-500/20 text-emerald-400', label: 'Nạp' },
+    WITHDRAW: { cls: 'bg-red-500/20 text-red-400', label: 'Rút' },
+    TRANSFER: { cls: 'bg-blue-500/20 text-blue-400', label: 'Chuyển' },
+    PAYMENT: { cls: 'bg-amber-500/20 text-amber-400', label: 'Thanh toán' },
+  };
+  const m = map[type] || { cls: 'bg-violet-500/20 text-violet-400', label: type };
+  return <span className={`px-2 py-1 rounded text-xs font-bold ${m.cls}`}>{m.label}</span>;
+}
+
+function txAmountCell(tx: TransactionResponse) {
+  const fmt = Number(tx.amount).toLocaleString('vi-VN');
+  if (tx.transactionType === 'TOPUP') return <span className="text-emerald-400 font-bold">+{fmt}</span>;
+  if (tx.transactionType === 'WITHDRAW') return <span className="text-red-400 font-bold">-{fmt}</span>;
+  return <span className="text-white font-bold">{fmt}</span>;
+}
+
+function statusBadge(s: string) {
+  const cls =
+    s === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-400' :
+    s === 'FAILED' ? 'bg-red-500/20 text-red-400' :
+    s === 'PENDING' ? 'bg-amber-500/20 text-amber-400' :
+    'bg-slate-800 text-slate-300';
+  return <span className={`px-2 py-1 rounded text-xs font-bold ${cls}`}>{s}</span>;
+}
+
 export function AdminDashboard() {
   const { session } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'logs' | 'crypto'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'logs' | 'crypto' | 'transactions'>('users');
   const [usersPage, setUsersPage] = useState<Page<AdminUserResponse> | null>(null);
   const [logsPage, setLogsPage] = useState<Page<AuditLogResponse> | null>(null);
+  const [txPage, setTxPage] = useState<Page<TransactionResponse> | null>(null);
+  const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
@@ -27,6 +59,9 @@ export function AdminDashboard() {
       if (activeTab === 'users') {
         const data = await getAllUsers(page, 20);
         setUsersPage(data);
+      } else if (activeTab === 'transactions') {
+        const data = await getAdminTransactions(page, 20);
+        setTxPage(data);
       } else {
         const data = await getAuditLogs(page, 20);
         setLogsPage(data);
@@ -36,6 +71,15 @@ export function AdminDashboard() {
       alert("Lỗi tải dữ liệu: " + e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadStats = async () => {
+    try {
+      const data = await getAdminStats();
+      setStats(data);
+    } catch (e: any) {
+      console.warn('Không tải được thống kê:', e.message);
     }
   };
 
@@ -72,9 +116,10 @@ export function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (activeTab !== 'crypto') {
-      fetchData(0);
-    }
+    if (activeTab === 'crypto') return;      // tab crypto tự tìm kiếm, không cần nạp sẵn
+    if (activeTab === 'transactions') loadStats();
+    fetchData(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   const handleToggleLock = async (user: AdminUserResponse) => {
@@ -162,6 +207,12 @@ export function AdminDashboard() {
           >
             <span className="flex items-center gap-2"><Bitcoin className="w-4 h-4" /> Tra cứu Blockchain</span>
           </button>
+          <button
+            onClick={() => setActiveTab('transactions')}
+            className={`pb-4 px-2 font-bold transition-colors ${activeTab === 'transactions' ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-400 hover:text-white'}`}
+          >
+            <span className="flex items-center gap-2"><ArrowLeftRight className="w-4 h-4" /> Giao dịch</span>
+          </button>
         </div>
 
         {activeTab === 'crypto' ? (
@@ -232,6 +283,92 @@ export function AdminDashboard() {
               </table>
             </div>
           </Card>
+        ) : activeTab === 'transactions' ? (
+          <div className="space-y-6">
+            {/* Thống kê hệ thống */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <Card className="!p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Người dùng</p>
+                <p className="text-2xl font-black text-white">{fmtNum(stats?.totalUsers)}</p>
+              </Card>
+              <Card className="!p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5" /> Ví</p>
+                <p className="text-2xl font-black text-white">{fmtNum(stats?.totalAccounts)}</p>
+              </Card>
+              <Card className="!p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><ReceiptText className="w-3.5 h-3.5" /> Giao dịch</p>
+                <p className="text-2xl font-black text-white">{fmtNum(stats?.totalTransactions)}</p>
+              </Card>
+              <Card className="!p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><ArrowDownToLine className="w-3.5 h-3.5" /> Nạp hôm nay</p>
+                <p className="text-lg font-black text-emerald-400">{fmtVnd(stats?.totalTopUp)}</p>
+              </Card>
+              <Card className="!p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><ArrowUpFromLine className="w-3.5 h-3.5" /> Rút hôm nay</p>
+                <p className="text-lg font-black text-red-400">{fmtVnd(stats?.totalWithdraw)}</p>
+              </Card>
+              <Card className="!p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Chuyển hôm nay</p>
+                <p className="text-lg font-black text-blue-400">{fmtVnd(stats?.totalTransfer)}</p>
+              </Card>
+            </div>
+
+            <Card>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <><ArrowLeftRight className="w-5 h-5 text-emerald-400" /> Giao dịch toàn hệ thống</>
+                </h2>
+                <Button variant="secondary" onClick={() => { loadStats(); fetchData(currentPage); }} className="w-auto py-2 flex items-center gap-2" title="Tải lại">
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  Tải lại
+                </Button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-sm">
+                      <th className="p-4 font-semibold">Mã GD</th>
+                      <th className="p-4 font-semibold">Loại</th>
+                      <th className="p-4 font-semibold">Nguồn → Đích</th>
+                      <th className="p-4 font-semibold text-right">Số tiền</th>
+                      <th className="p-4 font-semibold">Trạng thái</th>
+                      <th className="p-4 font-semibold">Thời gian</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/50">
+                    {txPage?.content.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="p-4 text-xs text-slate-400 font-mono">{tx.referenceNumber}</td>
+                        <td className="p-4">{txBadge(tx.transactionType)}</td>
+                        <td className="p-4 text-sm text-slate-300 font-mono">
+                          {tx.sourceAccountNumber || '—'} → {tx.destinationAccountNumber || '—'}
+                        </td>
+                        <td className="p-4 text-right">{txAmountCell(tx)}</td>
+                        <td className="p-4">{statusBadge(tx.status)}</td>
+                        <td className="p-4 text-sm text-slate-400">{new Date(tx.createdAt).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    {!txPage?.content?.length && (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-slate-500">Không có giao dịch nào</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-between items-center mt-6">
+                <Button variant="secondary" className="w-auto py-2 flex items-center gap-1" disabled={currentPage === 0} onClick={() => fetchData(currentPage - 1)} title="Trước">
+                  <ChevronLeft className="w-4 h-4" /> Trước
+                </Button>
+                <span className="text-sm text-slate-400">Trang {currentPage + 1} / {txPage?.totalPages || 1}</span>
+                <Button variant="secondary" className="w-auto py-2 flex items-center gap-1" disabled={currentPage >= ((txPage?.totalPages || 1) - 1)} onClick={() => fetchData(currentPage + 1)} title="Sau">
+                  Sau <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </Card>
+          </div>
         ) : (
           <Card>
             <div className="flex items-center justify-between mb-6">

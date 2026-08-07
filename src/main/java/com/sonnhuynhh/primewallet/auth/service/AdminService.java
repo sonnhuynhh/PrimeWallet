@@ -1,11 +1,18 @@
 package com.sonnhuynhh.primewallet.auth.service;
 
+import com.sonnhuynhh.primewallet.auth.dto.AdminStatsResponse;
 import com.sonnhuynhh.primewallet.auth.dto.AdminUserResponse;
 import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
 import com.sonnhuynhh.primewallet.common.service.AuditService;
+import com.sonnhuynhh.primewallet.wallet.dto.TransactionResponse;
+import com.sonnhuynhh.primewallet.wallet.entity.Transaction;
+import com.sonnhuynhh.primewallet.wallet.enums.TransactionStatus;
+import com.sonnhuynhh.primewallet.wallet.enums.TransactionType;
+import com.sonnhuynhh.primewallet.wallet.repository.AccountRepository;
+import com.sonnhuynhh.primewallet.wallet.repository.TransactionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -13,6 +20,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import com.sonnhuynhh.primewallet.common.entity.AuditLog;
 import com.sonnhuynhh.primewallet.common.repository.AuditLogRepository;
@@ -40,6 +50,8 @@ import com.sonnhuynhh.primewallet.common.dto.AuditLogResponse;
 public class AdminService {
 
     private final UserRepository userRepository;
+    private final AccountRepository accountRepository;
+    private final TransactionRepository transactionRepository;
     private final AuditService auditService;
     private final AuditLogRepository auditLogRepository;
 
@@ -69,6 +81,84 @@ public class AdminService {
                 .detail(log.getDetail())
                 .ipAddress(log.getIpAddress())
                 .createdAt(log.getCreatedAt())
+                .build();
+    }
+
+    // ==================== GIAO DỊCH HỆ THỐNG (ĐỌC-ONLY) ====================
+
+    /**
+     * Lấy toàn bộ giao dịch trên hệ thống (có phân trang).
+     *
+     * Đọc-only — admin chỉ XEM. KHÔNG có thao tác nào thay đổi số dư ở đây,
+     * giữ tính minh bạch và an toàn tài sản cho người dùng.
+     *
+     * findAll(Pageable) kế thừa từ JpaRepository: content + totalElements + totalPages.
+     * Sort (mặc định createdAt DESC) được thiết lập qua Pageable từ Controller.
+     *
+     * @Transactional(readOnly = true): giữ Hibernate session mở trong lúc map entity → DTO.
+     * sourceAccount / destinationAccount là LAZY (open-in-view=false) — nếu map bên ngoài
+     * transaction sẽ ném LazyInitializationException (đã gặp lỗi này trước khi thêm annotation).
+     */
+    @Transactional(readOnly = true)
+    public Page<TransactionResponse> getAllTransactions(Pageable pageable) {
+        return transactionRepository.findAll(pageable)
+                .map(this::toTransactionResponse);
+    }
+
+    /**
+     * Thống kê toàn hệ thống.
+     *
+     * - Số lượng tổng (user / ví / giao dịch).
+     * - Tổng tiền giao dịch thành công HÔM NAY theo loại.
+     */
+    public AdminStatsResponse getStats() {
+        // Khung giờ hôm nay: [00:00:00, 00:00:00 ngày sau)
+        LocalDateTime from = LocalDate.now().atStartOfDay();
+        LocalDateTime to = from.plusDays(1);
+
+        return AdminStatsResponse.builder()
+                .totalUsers(userRepository.count())
+                .totalAccounts(accountRepository.count())
+                .totalTransactions(transactionRepository.count())
+                .totalTopUp(sumToday(TransactionType.TOPUP, from, to))
+                .totalWithdraw(sumToday(TransactionType.WITHDRAW, from, to))
+                .totalTransfer(sumToday(TransactionType.TRANSFER, from, to))
+                .build();
+    }
+
+    /**
+     * Tính tổng tiền giao dịch THÀNH CÔNG hôm nay theo loại.
+     * Trả về BigDecimal (0 nếu chưa có giao dịch).
+     */
+    private BigDecimal sumToday(TransactionType type, LocalDateTime from, LocalDateTime to) {
+        return transactionRepository.sumAmountByTypeAndStatusAndDate(
+                type, TransactionStatus.SUCCESS, from, to);
+    }
+
+    /**
+     * Chuyển Transaction entity → TransactionResponse (chỉ để XEM).
+     * Mirror của TransactionService.toResponse (private bên đó) — phải null-guard
+     * source/destination vì TOPUP không có source, WITHDRAW không có destination.
+     */
+    private TransactionResponse toTransactionResponse(Transaction transaction) {
+        return TransactionResponse.builder()
+                .id(transaction.getId())
+                .referenceNumber(transaction.getReferenceNumber())
+                .transactionType(transaction.getTransactionType().name())
+                .sourceAccountNumber(
+                        transaction.getSourceAccount() != null
+                                ? transaction.getSourceAccount().getAccountNumber()
+                                : null)
+                .destinationAccountNumber(
+                        transaction.getDestinationAccount() != null
+                                ? transaction.getDestinationAccount().getAccountNumber()
+                                : null)
+                .amount(transaction.getAmount())
+                .fee(transaction.getFee())
+                .currency(transaction.getCurrency())
+                .description(transaction.getDescription())
+                .status(transaction.getStatus().name())
+                .createdAt(transaction.getCreatedAt())
                 .build();
     }
 

@@ -1,7 +1,9 @@
 package com.sonnhuynhh.primewallet.auth.controller;
 
+import com.sonnhuynhh.primewallet.auth.dto.AdminStatsResponse;
 import com.sonnhuynhh.primewallet.auth.dto.AdminUserResponse;
 import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
+import com.sonnhuynhh.primewallet.wallet.dto.TransactionResponse;
 import com.sonnhuynhh.primewallet.auth.service.AdminService;
 import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
 import com.sonnhuynhh.primewallet.wallet.entity.DailyReport;
@@ -79,6 +81,31 @@ public class AdminController {
             @PageableDefault(size = 50, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         Page<AuditLogResponse> logs = adminService.getAuditLogs(pageable, userId);
         return ResponseEntity.ok(ApiResponse.success("Lịch sử hệ thống", logs));
+    }
+
+    /**
+     * Lấy toàn bộ giao dịch trên hệ thống (phân trang).
+     *
+     * GET /api/v1/admin/transactions?page=0&size=20
+     *
+     * Đọc-only. Sắp xếp mặc định theo createdAt mới nhất trước.
+     */
+    @GetMapping("/transactions")
+    public ResponseEntity<ApiResponse<Page<TransactionResponse>>> getAllTransactions(
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        Page<TransactionResponse> transactions = adminService.getAllTransactions(pageable);
+        return ResponseEntity.ok(ApiResponse.success("Danh sách giao dịch", transactions));
+    }
+
+    /**
+     * Thống kê toàn hệ thống (đọc-only).
+     *
+     * GET /api/v1/admin/stats
+     */
+    @GetMapping("/stats")
+    public ResponseEntity<ApiResponse<AdminStatsResponse>> getStats() {
+        AdminStatsResponse stats = adminService.getStats();
+        return ResponseEntity.ok(ApiResponse.success("Thống kê hệ thống", stats));
     }
 
     /**

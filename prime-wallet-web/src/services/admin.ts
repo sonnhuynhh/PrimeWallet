@@ -60,3 +60,22 @@ export async function getAuditLogs(page = 0, size = 50, userId?: string) {
 export async function getAdminCryptoHistory(address: string) {
   return request<import('./crypto').EtherscanResponse>(`/api/v1/admin/crypto/history?address=${address}`);
 }
+
+export type AdminStats = {
+  totalUsers: number;
+  totalAccounts: number;
+  totalTransactions: number;
+  totalTopUp: string;
+  totalWithdraw: string;
+  totalTransfer: string;
+};
+
+export async function getAdminTransactions(page = 0, size = 20) {
+  return request<Page<import('../types/api').TransactionResponse>>(
+    `/api/v1/admin/transactions?page=${page}&size=${size}`
+  );
+}
+
+export async function getAdminStats() {
+  return request<AdminStats>(`/api/v1/admin/stats`);
+}
