@@ -1,29 +1,39 @@
 package com.sonnhuynhh.primewallet.wallet.controller;
 
-import com.sonnhuynhh.primewallet.wallet.dto.BroadcastTransactionRequest;
-import com.sonnhuynhh.primewallet.wallet.dto.TransactionHashResponse;
-import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import org.web3j.protocol.Web3j;
-import org.web3j.protocol.core.methods.response.EthGasPrice;
-import com.sonnhuynhh.primewallet.common.service.AuditService;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
+import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
+import com.sonnhuynhh.primewallet.common.service.AuditService;
+import com.sonnhuynhh.primewallet.config.Web3jProvider;
+import com.sonnhuynhh.primewallet.wallet.dto.*;
+import com.sonnhuynhh.primewallet.wallet.enums.BlockchainNetwork;
+import com.sonnhuynhh.primewallet.wallet.service.GasEstimationService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.*;
+import org.web3j.protocol.core.methods.response.EthGasPrice;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
 
-import java.math.BigInteger;
 import java.util.UUID;
 
+/**
+ * Controller xử lý giao dịch Crypto: gas price, estimate gas, broadcast.
+ *
+ * Base URL: /api/v1/crypto/transactions
+ *
+ * Kiến trúc Non-Custodial: client ký giao dịch offline (ethers.js)
+ * → backend chỉ broadcast raw signed transaction + verify balance.
+ */
 @RestController
 @RequestMapping("/api/v1/crypto/transactions")
 @RequiredArgsConstructor
 public class CryptoTransactionController {
 
-    private final Web3j web3j;
+    private final Web3jProvider web3jProvider;
+    private final GasEstimationService gasEstimationService;
     private final AuditService auditService;
     private final UserRepository userRepository;
 
@@ -34,32 +44,86 @@ public class CryptoTransactionController {
         return user.getId();
     }
 
+    // ==================== GAS ====================
+
+    /**
+     * Lấy gas price hiện tại của một mạng.
+     */
     @GetMapping("/gas-price")
-    public ResponseEntity<ApiResponse<BigInteger>> getGasPrice() {
+    public ResponseEntity<ApiResponse<GasPriceResponse>> getGasPrice(
+            @RequestParam(defaultValue = "eth_sepolia") String network) {
+
+        BlockchainNetwork net = BlockchainNetwork.fromIdWithLegacy(network);
         try {
-            EthGasPrice gasPrice = web3j.ethGasPrice().send();
-            return ResponseEntity.ok(ApiResponse.success("Phí Gas hiện tại", gasPrice.getGasPrice()));
+            EthGasPrice gasPrice = web3jProvider.getWeb3j(net).ethGasPrice().send();
+            return ResponseEntity.ok(ApiResponse.success("Phí Gas hiện tại",
+                    GasPriceResponse.builder()
+                            .blockchainNetwork(net.getId())
+                            .gasPriceWei(gasPrice.getGasPrice())
+                            .nativeSymbol(net.getNativeSymbol())
+                            .build()));
         } catch (Exception e) {
-            throw new RuntimeException("Failed to fetch gas price", e);
+            throw new RuntimeException("Failed to fetch gas price for " + net.getId(), e);
         }
     }
 
+    /**
+     * Ước tính gas cho giao dịch (native hoặc ERC-20) — hiển thị preview phí trước khi gửi.
+     */
+    @PostMapping("/estimate-gas")
+    public ResponseEntity<ApiResponse<EstimateGasResponse>> estimateGas(
+            @Valid @RequestBody EstimateGasRequest request) {
+
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(request.getBlockchainNetwork());
+        EstimateGasResponse response = (request.getTokenAddress() == null || request.getTokenAddress().isBlank())
+                ? gasEstimationService.estimateNativeTransfer(network, request.getFromAddress(), request.getToAddress(), request.getAmount())
+                : gasEstimationService.estimateTokenTransfer(network, request.getFromAddress(), request.getToAddress(),
+                        request.getTokenAddress(), weiOfAmount(request.getAmount()));
+        return ResponseEntity.ok(ApiResponse.success("Ước tính phí gas (chưa bao gồm phí broadcast của nền tảng)", response));
+    }
+
+    // ==================== BROADCAST ====================
+
+    /**
+     * Broadcast raw signed transaction lên mạng.
+     * Client ký OFFLINE bằng ethers.js (signer.signTransaction / signMessage) → gửi hex.
+     */
     @PostMapping("/broadcast")
     public ResponseEntity<ApiResponse<TransactionHashResponse>> broadcastTransaction(
             Authentication authentication,
-            @RequestBody BroadcastTransactionRequest request) {
-        try {
-            EthSendTransaction ethSendTransaction = web3j.ethSendRawTransaction(request.getSignedTransactionHex()).send();
-            if (ethSendTransaction.hasError()) {
-                throw new RuntimeException("Error broadcasting transaction: " + ethSendTransaction.getError().getMessage());
-            }
-            
-            UUID userId = getUserId(authentication);
-            auditService.log(userId, "BROADCAST_CRYPTO_TX", "Đẩy giao dịch Crypto lên mạng (Hash: " + ethSendTransaction.getTransactionHash() + ")", null);
+            @Valid @RequestBody BroadcastTransactionRequest request,
+            @RequestParam(defaultValue = "eth_sepolia") String blockchainNetwork) {
 
-            return ResponseEntity.ok(ApiResponse.success("Đẩy giao dịch lên mạng thành công", new TransactionHashResponse(ethSendTransaction.getTransactionHash())));
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(blockchainNetwork);
+
+        try {
+            EthSendTransaction ethSendTransaction = web3jProvider.getWeb3j(network)
+                    .ethSendRawTransaction(request.getSignedTransactionHex()).send();
+
+            if (ethSendTransaction.hasError()) {
+                throw new RuntimeException("Lỗi broadcast: " + ethSendTransaction.getError().getMessage());
+            }
+
+            UUID userId = getUserId(authentication);
+            auditService.log(userId, "BROADCAST_CRYPTO_TX",
+                    "Đẩy giao dịch Crypto lên mạng " + network.getLabel()
+                            + " (Hash: " + ethSendTransaction.getTransactionHash() + ")", null);
+
+            return ResponseEntity.ok(ApiResponse.success("Đẩy giao dịch lên mạng thành công",
+                    new TransactionHashResponse(ethSendTransaction.getTransactionHash())));
         } catch (Exception e) {
-            throw new RuntimeException("Failed to broadcast transaction", e);
+            throw new RuntimeException("Failed to broadcast transaction — " + e.getMessage(), e);
+        }
+    }
+
+    // ==================== HELPERS ====================
+
+    private String weiOfAmount(String amount) {
+        // Chuyển số thập phân (VD "100") về chuỗi số nguyên raw units cho estimate gas token.
+        try {
+            return new java.math.BigDecimal(amount).toBigInteger().toString();
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Amount không hợp lệ: " + amount);
         }
     }
 }

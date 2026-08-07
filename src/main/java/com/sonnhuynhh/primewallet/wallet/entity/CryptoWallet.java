@@ -15,7 +15,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "crypto_wallets", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"user_id", "blockchain_network"})
+        @UniqueConstraint(columnNames = {"user_id", "wallet_address", "blockchain_network"})
 })
 @Getter
 @Setter
@@ -35,8 +35,17 @@ public class CryptoWallet {
     @Column(name = "wallet_address", nullable = false, unique = true, length = 42)
     private String walletAddress;
 
-    @Column(name = "blockchain_network", nullable = false, length = 20)
-    private String blockchainNetwork; // e.g., ETH_SEPOLIA, BSC_TESTNET
+    @Column(name = "blockchain_network", nullable = false, length = 30)
+    private String blockchainNetwork; // e.g., eth_sepolia, bsc_testnet
+
+    /** Role của ví: PRIMARY (mặc định) hoặc SECONDARY (thêm thủ công). */
+    @Column(name = "is_primary", nullable = false)
+    @Builder.Default
+    private boolean primary = false;
+
+    /** Tên hiển thị do người dùng đặt (VD: "Ví chính", "Ví tiết kiệm"). */
+    @Column(name = "label", length = 60)
+    private String label;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

@@ -8,6 +8,9 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+/**
+ * Tóm tắt một ví Crypto đã liên kết (dùng trong danh sách ví).
+ */
 @Data
 @Builder
 @NoArgsConstructor
@@ -16,5 +19,7 @@ public class CryptoWalletResponse {
     private UUID id;
     private String walletAddress;
     private String blockchainNetwork;
+    private String label;
+    private boolean primary;
     private LocalDateTime linkedAt;
 }

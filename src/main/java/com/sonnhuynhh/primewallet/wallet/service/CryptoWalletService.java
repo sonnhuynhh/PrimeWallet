@@ -3,115 +3,250 @@ package com.sonnhuynhh.primewallet.wallet.service;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
-import com.sonnhuynhh.primewallet.wallet.dto.CryptoWalletResponse;
-import com.sonnhuynhh.primewallet.wallet.dto.LinkWalletRequest;
-import com.sonnhuynhh.primewallet.wallet.entity.CryptoWallet;
-import com.sonnhuynhh.primewallet.wallet.repository.CryptoWalletRepository;
 import com.sonnhuynhh.primewallet.common.service.AuditService;
+import com.sonnhuynhh.primewallet.config.Web3jProvider;
+import com.sonnhuynhh.primewallet.wallet.dto.*;
+import com.sonnhuynhh.primewallet.wallet.entity.CryptoTransaction;
+import com.sonnhuynhh.primewallet.wallet.entity.CryptoWallet;
+import com.sonnhuynhh.primewallet.wallet.enums.BlockchainNetwork;
+import com.sonnhuynhh.primewallet.wallet.repository.CryptoTransactionRepository;
+import com.sonnhuynhh.primewallet.wallet.repository.CryptoWalletRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.web3j.protocol.Web3j;
+import org.web3j.protocol.core.DefaultBlockParameterName;
+import org.web3j.protocol.core.methods.response.EthGetBalance;
+import org.web3j.utils.Convert;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * Service quản lý ví Crypto (kiến trúc Non-Custodial — chỉ lưu public address).
+ *
+ * Tính năng:
+ * - Liên kết ví (link), hỗ trợ NHIỀU ví trên cùng mạng
+ * - Xem số dư native coin + token ERC-20 (multi-network)
+ * - Lịch sử giao dịch on-chain (qua Etherscan/explorer) + lịch sử user thực hiện trong app
+ */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CryptoWalletService {
 
     private final CryptoWalletRepository cryptoWalletRepository;
+    private final CryptoTransactionRepository cryptoTransactionRepository;
     private final UserRepository userRepository;
-    private final org.web3j.protocol.Web3j web3j;
+    private final Web3jProvider web3jProvider;
     private final EtherscanService etherscanService;
+    private final ERC20Service erc20Service;
     private final AuditService auditService;
+
+    // ==================== LINK WALLET ====================
 
     @Transactional
     public CryptoWalletResponse linkWallet(UUID userId, LinkWalletRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Người dùng không tồn tại"));
 
-        // Check if user already linked a wallet for this network
-        java.util.Optional<CryptoWallet> existingWalletOpt = cryptoWalletRepository
-                .findByUserIdAndBlockchainNetwork(userId, request.getBlockchainNetwork());
+        // Chuẩn hóa network id (hỗ trợ cả alias cũ "ETH_SEPOLIA")
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(request.getBlockchainNetwork());
+        String networkId = network.getId();
 
-        if (existingWalletOpt.isPresent()) {
-            CryptoWallet existing = existingWalletOpt.get();
-            if (existing.getWalletAddress().equalsIgnoreCase(request.getWalletAddress())) {
-                // If it's the same wallet, just return it instead of throwing an error
-                return mapToResponse(existing);
-            } else {
-                throw new IllegalArgumentException(
-                        "Người dùng đã có ví khác được liên kết cho mạng này: " + request.getBlockchainNetwork());
+        // Địa chỉ unique trên TOÀN hệ thống (entity: wallet_address unique=true).
+        // Nếu user link lại cùng address + cùng mạng → idempotent trả ví cũ.
+        // Nếu address thuộc người khác (hoặc cùng user/hệ mạng khác) → chặn.
+        List<CryptoWallet> conflicts = cryptoWalletRepository.findByWalletAddress(request.getWalletAddress());
+        if (!conflicts.isEmpty()) {
+            CryptoWallet existing = conflicts.get(0);
+            if (existing.getUser().getId().equals(userId)
+                    && existing.getBlockchainNetwork().equals(networkId)) {
+                return toCryptoWalletResponse(existing);
             }
+            throw new IllegalArgumentException(
+                    "Địa chỉ ví này đã được liên kết với tài khoản khác");
         }
 
-        // Validate if address is already linked to someone else
-        if (cryptoWalletRepository.existsByWalletAddress(request.getWalletAddress())) {
-            throw new IllegalArgumentException("Địa chỉ ví đã được liên kết với tài khoản khác");
-        }
+        // Kiểm tra user đã có ví trên mạng này chưa → cái đầu tiên là PRIMARY
+        boolean isPrimary = cryptoWalletRepository.findByUserIdAndBlockchainNetwork(userId, networkId).isEmpty();
 
         CryptoWallet wallet = CryptoWallet.builder()
                 .user(user)
                 .walletAddress(request.getWalletAddress())
-                .blockchainNetwork(request.getBlockchainNetwork())
+                .blockchainNetwork(networkId)
+                .label(request.getLabel())
+                .primary(isPrimary)
                 .build();
 
-        CryptoWallet savedWallet = cryptoWalletRepository.save(wallet);
+        CryptoWallet saved = cryptoWalletRepository.save(wallet);
+        auditService.log(userId, "LINK_WALLET",
+                String.format("Liên kết ví Web3 %s trên %s", request.getWalletAddress(), network.getLabel()), null);
 
-        auditService.log(userId, "LINK_WALLET", String.format("Liên kết ví Web3 %s (Mạng: %s)", request.getWalletAddress(), request.getBlockchainNetwork()), null);
-
-        return mapToResponse(savedWallet);
+        return toCryptoWalletResponse(saved);
     }
 
+    // ==================== GETTERS ====================
+
+    @Transactional(readOnly = true)
     public List<CryptoWalletResponse> getLinkedWallets(UUID userId) {
-        return cryptoWalletRepository.findByUserId(userId).stream()
-                .map(this::mapToResponse)
+        return cryptoWalletRepository.findByUserIdOrderByPrimaryDescCreatedAtAsc(userId).stream()
+                .map(this::toCryptoWalletResponse)
                 .collect(Collectors.toList());
     }
 
-    public com.sonnhuynhh.primewallet.wallet.dto.WalletBalanceResponse getWalletBalance(UUID userId, UUID walletId) {
-        CryptoWallet wallet = cryptoWalletRepository.findById(walletId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví"));
+    /**
+     * Số dư của 1 ví: native coin + token ERC-20, theo mạng của ví.
+     */
+    public WalletBalanceResponse getWalletBalance(UUID userId, UUID walletId) {
+        CryptoWallet wallet = findByOwner(userId, walletId);
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(wallet.getBlockchainNetwork());
 
-        if (!wallet.getUser().getId().equals(userId)) {
-            throw new IllegalArgumentException("Không có quyền truy cập ví này");
-        }
+        BigInteger wei = fetchNativeBalance(wallet.getWalletAddress(), network);
+        BigDecimal balance = wei == null ? BigDecimal.ZERO
+                : Convert.fromWei(new BigDecimal(wei), Convert.Unit.ETHER);
 
-        java.math.BigInteger wei = null;
-
+        List<TokenBalanceResponse> tokens = Collections.emptyList();
         try {
-            org.web3j.protocol.core.methods.response.EthGetBalance balanceResponse = web3j.ethGetBalance(
-                    wallet.getWalletAddress(),
-                    org.web3j.protocol.core.DefaultBlockParameterName.LATEST).send();
-            wei = balanceResponse.getBalance();
+            tokens = erc20Service.getTokenBalances(network, wallet.getWalletAddress());
         } catch (Exception e) {
-            System.err.println("Web3j failed to fetch balance, falling back to Etherscan... " + e.getMessage());
-            wei = etherscanService.getWalletBalance(wallet.getWalletAddress());
+            log.warn("Không lấy được token balances cho {} trên {}: {}",
+                    wallet.getWalletAddress(), network.getId(), e.getMessage());
         }
 
-        if (wei == null) {
-            throw new RuntimeException("Không thể lấy số dư từ blockchain (cả RPC và Etherscan đều lỗi)");
-        }
-
-        java.math.BigDecimal eth = org.web3j.utils.Convert.fromWei(new java.math.BigDecimal(wei),
-                org.web3j.utils.Convert.Unit.ETHER);
-
-        return com.sonnhuynhh.primewallet.wallet.dto.WalletBalanceResponse.builder()
+        return WalletBalanceResponse.builder()
                 .walletId(wallet.getId())
                 .walletAddress(wallet.getWalletAddress())
-                .blockchainNetwork(wallet.getBlockchainNetwork())
-                .balanceWei(wei.toString())
-                .balanceEth(eth)
+                .blockchainNetwork(network.getId())
+                .networkLabel(network.getLabel())
+                .nativeSymbol(network.getNativeSymbol())
+                .chainId(web3jProvider.getChainId(network))
+                .balanceEth(balance)
+                .balanceWei(wei != null ? wei.toString() : "0")
+                .tokens(tokens)
                 .build();
     }
 
-    private CryptoWalletResponse mapToResponse(CryptoWallet wallet) {
+    /**
+     * Số dư 1 token ERC-20 cụ thể của một ví.
+     */
+    public TokenBalanceResponse getTokenBalanceOfWallet(UUID userId, UUID walletId, String contractAddress) {
+        CryptoWallet wallet = findByOwner(userId, walletId);
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(wallet.getBlockchainNetwork());
+        return erc20Service.getTokenBalance(network, wallet.getWalletAddress(), contractAddress);
+    }
+
+    /**
+     * Số dư token ERC-20 cho bất kỳ địa chỉ nào (dùng trong kiểm tra số dư khi gửi).
+     */
+    public TokenBalanceResponse getTokenBalanceByAddress(BlockchainNetwork network, String address, String contractAddress) {
+        return erc20Service.getTokenBalance(network, address, contractAddress);
+    }
+
+    /**
+     * Danh sách token được hỗ trợ cho một mạng.
+     */
+    public List<TokenConfigResponse> getSupportedTokensForNetwork(BlockchainNetwork network) {
+        return erc20Service.getSupportedTokens(network);
+    }
+
+    /**
+     * Lịch sử on-chain từ Etherscan/explorer theo mạng của ví.
+     */
+    public EtherscanResponse getWalletHistory(UUID userId, UUID walletId) {
+        CryptoWallet wallet = findByOwner(userId, walletId);
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(wallet.getBlockchainNetwork());
+        return etherscanService.getTransactionHistory(wallet.getWalletAddress(), network);
+    }
+
+    /**
+     * Lịch sử giao dịch user thực hiện trong app (PENDING/SUCCESS/FAILED).
+     */
+    @Transactional(readOnly = true)
+    public Page<CryptoTransactionResponse> getMyCryptoTransactions(UUID userId, UUID walletId, Pageable pageable) {
+        CryptoWallet wallet = findByOwner(userId, walletId);
+        return cryptoTransactionRepository.findByWalletIdOrderByCreatedAtDesc(wallet.getId(), pageable)
+                .map(this::toCryptoTransactionResponse);
+    }
+
+    // ==================== OWNERSHIP VERIFY ====================
+
+    public CryptoWallet findByOwner(UUID userId, UUID walletId) {
+        CryptoWallet wallet = cryptoWalletRepository.findById(walletId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví"));
+        if (!wallet.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Không có quyền truy cập ví này");
+        }
+        return wallet;
+    }
+
+    // ==================== HELPERS ====================
+
+    private BigInteger fetchNativeBalance(String address, BlockchainNetwork network) {
+        try {
+            Web3j web3j = web3jProvider.getWeb3j(network);
+            EthGetBalance balanceResponse = web3j.ethGetBalance(address, DefaultBlockParameterName.LATEST).send();
+            return balanceResponse.getBalance();
+        } catch (Exception e) {
+            log.warn("Web3j balance thất bại {} on {}: {}, fallback Etherscan",
+                    address, network.getId(), e.getMessage());
+            return etherscanService.getWalletBalance(address, network);
+        }
+    }
+
+    /**
+     * Lưu một giao dịch Crypto do user phát hành (gọi từ CryptoTransactionService).
+     */
+    @Transactional
+    public CryptoTransaction saveTransaction(CryptoTransaction tx) {
+        return cryptoTransactionRepository.save(tx);
+    }
+
+    /**
+     * Xóa một ví đã liên kết khỏi tài khoản user.
+     * Không ảnh hưởng tới tài sản on-chain.
+     */
+    @Transactional
+    public void deleteWallet(CryptoWallet wallet) {
+        cryptoWalletRepository.delete(wallet);
+        auditService.log(wallet.getUser().getId(), "UNLINK_WALLET",
+                String.format("Đã xóa ví %s trên %s", wallet.getWalletAddress(), wallet.getBlockchainNetwork()), null);
+    }
+
+    private CryptoWalletResponse toCryptoWalletResponse(CryptoWallet wallet) {
         return CryptoWalletResponse.builder()
                 .id(wallet.getId())
                 .walletAddress(wallet.getWalletAddress())
                 .blockchainNetwork(wallet.getBlockchainNetwork())
+                .label(wallet.getLabel())
+                .primary(wallet.isPrimary())
                 .linkedAt(wallet.getCreatedAt())
+                .build();
+    }
+
+    private CryptoTransactionResponse toCryptoTransactionResponse(CryptoTransaction tx) {
+        return CryptoTransactionResponse.builder()
+                .id(tx.getId())
+                .type(tx.getType())
+                .txHash(tx.getTxHash())
+                .fromAddress(tx.getFromAddress())
+                .toAddress(tx.getToAddress())
+                .amount(tx.getAmount())
+                .symbol(tx.getSymbol())
+                .tokenAddress(tx.getTokenAddress())
+                .gasPriceWei(tx.getGasPriceWei())
+                .gasLimit(tx.getGasLimit())
+                .feeWei(tx.getFeeWei())
+                .status(tx.getStatus())
+                .description(tx.getDescription())
+                .createdAt(tx.getCreatedAt())
                 .build();
     }
 }
