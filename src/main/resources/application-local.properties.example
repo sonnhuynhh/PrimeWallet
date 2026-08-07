@@ -1,0 +1,31 @@
+# ====================================================================
+# application-local.properties.EXAMPLE
+# --------------------------------------------------------------------
+# Fix #19: Template cho file cấu hình chứa BÍ MẬT (secrets).
+#
+# CÁCH DÙNG:
+#   1. Copy file này thành `application-local.properties` (KHÔNG có .example)
+#   2. Điền các giá trị thật vào bên dưới
+#   3. File `application-local.properties` đã được .gitignore → KHÔNG commit lên git
+#
+# application.properties có `spring.profiles.active=local` nên Spring sẽ
+# tự động nạp đè file application-local.properties lên trên khi khởi động.
+# ====================================================================
+
+# ==================== DATABASE ====================
+# Mật khẩu Postgres thật (khớp với POSTGRES_PASSWORD trong docker-compose.yml)
+spring.datasource.password=change_me_strong_db_password
+
+# ==================== JWT ====================
+# Bí mật ký JWT — PHẢI >= 256 bit (>= 32 ký tự ngẫu nhiên).
+# Tạo nhanh: `openssl rand -base64 48`
+jwt.secret=change_me_generate_a_long_random_256_bit_secret_key
+
+# ==================== VNPAY ====================
+# Lấy từ merchant portal VNPAY (sandbox hoặc production)
+vnpay.tmn-code=YOUR_REAL_TMN_CODE
+vnpay.hash-secret=YOUR_REAL_HASH_SECRET
+
+# ==================== CORS (tùy chọn) ====================
+# Ghi đè origin cho môi trường thật, VD: https://app.primewallet.com
+# cors.allowed-origins=https://app.primewallet.com

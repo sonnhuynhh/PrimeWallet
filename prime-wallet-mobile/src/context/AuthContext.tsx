@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import { changePassword, getProfile, login, register, updateProfile as updateProfileRequest } from "../services/auth";
+import { setOnAuthFailure } from "../services/http";
 import { getMyAccount } from "../services/wallet";
-import { clearTokens, getTokens, saveTokens } from "../storage/tokenStore";
+import { clearTokens, getRole, getTokens, saveRole, saveTokens } from "../storage/tokenStore";
 import type { AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest, SessionState, UpdateProfileRequest } from "../types/api";
 
 type AuthContextValue = {
@@ -39,8 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const profile = await getProfile();
-      const account = await getMyAccount();
+      const [profile, account, role] = await Promise.all([getProfile(), getMyAccount(), getRole()]);
 
       setSession({
         auth: {
@@ -48,7 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           refreshToken,
           email: profile.email,
           fullName: profile.fullName,
-          role: "USER",
+          // Fix #14: role lấy từ storage (đã lưu lúc đăng nhập) thay vì hardcode "USER".
+          role,
         },
         profile,
         account,
@@ -58,6 +59,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(null);
     }
   };
+
+  // Fix #7: Khi refresh token hết hạn, http layer gọi callback này để đăng xuất.
+  useEffect(() => {
+    setOnAuthFailure(() => setSession(null));
+    return () => setOnAuthFailure(null);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -69,6 +76,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = async (payload: LoginRequest) => {
     const auth = await login(payload);
     await saveTokens(auth.accessToken, auth.refreshToken);
+    // Fix #14: lưu role trả về từ backend để khôi phục đúng quyền khi mở lại app.
+    await saveRole(auth.role);
     const nextSession = await buildSession(auth);
     setSession(nextSession);
   };
@@ -76,6 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUp = async (payload: RegisterRequest) => {
     const auth = await register(payload);
     await saveTokens(auth.accessToken, auth.refreshToken);
+    await saveRole(auth.role);
     const nextSession = await buildSession(auth);
     setSession(nextSession);
   };

@@ -103,9 +103,11 @@ public class TransactionController {
     @GetMapping("/history/{accountId}")
     public ResponseEntity<ApiResponse<Page<TransactionResponse>>> getHistory(
             @PathVariable UUID accountId,
-            @PageableDefault(size = 20) Pageable pageable) {
+            @PageableDefault(size = 20) Pageable pageable,
+            Authentication authentication) {
 
-        Page<TransactionResponse> history = transactionService.getTransactionHistory(accountId, pageable);
+        User user = getCurrentUser(authentication);
+        Page<TransactionResponse> history = transactionService.getTransactionHistory(accountId, user.getId(), pageable);
         return ResponseEntity.ok(ApiResponse.success("Lịch sử giao dịch", history));
     }
 

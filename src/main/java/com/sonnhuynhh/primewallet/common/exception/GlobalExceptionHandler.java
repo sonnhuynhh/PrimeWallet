@@ -77,6 +77,17 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
+    /**
+     * Xử lý khi user cố truy cập tài nguyên không thuộc quyền của mình (IDOR).
+     * HTTP 403 Forbidden.
+     */
+    @ExceptionHandler(UnauthorizedAccessException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnauthorizedAccess(UnauthorizedAccessException ex) {
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(ex.getMessage()));
+    }
+
     // ==================== SPRING EXCEPTIONS ====================
 
     /**
