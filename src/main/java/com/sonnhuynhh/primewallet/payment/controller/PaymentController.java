@@ -79,20 +79,25 @@ public class PaymentController {
 
     /**
      * API Return URL
-     * VNPAY sẽ chuyển hướng trình duyệt của người dùng về đây sau khi thanh toán xong.
-     * Để tiện test ở localhost (không có Ngrok), ta cho Return URL xử lý luôn giao dịch như IPN.
+     * VNPAY chuyển hướng TRÌNH DUYỆT của người dùng về đây sau khi thanh toán xong.
+     *
+     * Fix #4: Endpoint này CHỈ HIỂN THỊ trạng thái cho người dùng, KHÔNG cộng tiền.
+     * Việc cộng tiền vào ví CHỈ được thực hiện qua webhook server-to-server /ipn
+     * (đã xác thực chữ ký + idempotent). Đây là chuẩn an toàn cho cổng thanh toán:
+     * không bao giờ chuyển tiền dựa trên một redirect từ trình duyệt.
      */
     @GetMapping("/return")
     public ResponseEntity<String> vnpayReturn(@RequestParam Map<String, String> params) {
-        // Xử lý giao dịch
-        paymentService.processIpn(params);
-        
-        String vnp_ResponseCode = params.get("vnp_ResponseCode");
-        boolean isSuccess = "00".equals(vnp_ResponseCode);
-        
+        // Thông điệp lấy từ service: đã bao gồm cả trường hợp chữ ký không hợp lệ.
+        String message = paymentService.handleReturnDisplay(params);
+
+        // Chỉ coi là thành công khi chữ ký hợp lệ VÀ mã phản hồi là "00".
+        // Không dựa vào riêng vnp_ResponseCode vì tham số này do client gửi tới,
+        // kẻ tấn công có thể tự gọi /return với vnp_ResponseCode=00.
+        boolean isSuccess = paymentService.isValidSignature(params)
+                && "00".equals(params.get("vnp_ResponseCode"));
+
         String title = isSuccess ? "Thanh toán thành công!" : "Giao dịch thất bại";
-        String message = isSuccess ? "Tiền đã được nạp vào ví của bạn. Vui lòng đóng trang này để quay lại ứng dụng." 
-                                   : "Giao dịch thất bại hoặc bị hủy. Mã lỗi: " + vnp_ResponseCode;
         String colorClass = isSuccess ? "text-emerald-400" : "text-red-400";
         String bgClass = isSuccess ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30";
         String icon = isSuccess ? "✓" : "✗";

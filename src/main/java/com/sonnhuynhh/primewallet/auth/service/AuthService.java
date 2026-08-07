@@ -52,6 +52,7 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
     private final AuditService auditService;
+    private final com.sonnhuynhh.primewallet.wallet.service.AccountService accountService;
 
     @Value("${jwt.refresh-token-expiration}")
     private long refreshTokenExpiration; // 7 ngày = 604800000ms
@@ -60,6 +61,9 @@ public class AuthService {
 
     /**
      * Đăng ký tài khoản mới.
+     *
+     * CRITICAL FIX #1: Tự động tạo ví VNĐ sau khi đăng ký thành công.
+     * Trước đây, chỉ tạo User mà không tạo ví → mobile app crash khi gọi getMyAccount().
      */
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -84,11 +88,19 @@ public class AuthService {
 
         user = userRepository.save(user);
 
-        // 4. Ghi audit log
+        // 4. Tạo ví VNĐ mặc định cho user mới (CRITICAL FIX #1)
+        try {
+            accountService.createDefaultAccount(user.getId());
+        } catch (Exception e) {
+            // Nếu tạo ví thất bại, rollback toàn bộ transaction (do @Transactional)
+            throw new IllegalStateException("Không thể tạo ví cho tài khoản mới: " + e.getMessage(), e);
+        }
+
+        // 5. Ghi audit log
         auditService.log(user.getId(), "REGISTER",
                 "Đăng ký tài khoản mới: " + user.getEmail(), null);
 
-        // 5. Tạo token và trả về
+        // 6. Tạo token và trả về
         return generateAuthResponse(user);
     }
 

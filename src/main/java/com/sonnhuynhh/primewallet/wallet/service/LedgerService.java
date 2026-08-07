@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -124,17 +126,39 @@ public class LedgerService {
     // ==================== REDIS CACHE ====================
 
     /**
-     * Cập nhật số dư trong Redis cache (Write-Through Pattern).
+     * Cập nhật số dư trong Redis cache — CHỈ SAU KHI transaction COMMIT thành công.
      *
-     * Write-Through nghĩa là: Mỗi khi GHI DB → GHI REDIS luôn.
-     * → Cache luôn đồng bộ với DB.
-     * → Không lo cache trả về dữ liệu cũ (stale data).
+     * Fix #8 (Cache/DB inconsistency):
+     * Trước đây cache được ghi NGAY trong transaction. Nếu sau đó transaction ROLLBACK
+     * (VD: transfer đã DEBIT ví gửi rồi CREDIT ví nhận thất bại), DB quay về số cũ
+     * nhưng Redis vẫn giữ số SAI trong tối đa 30 phút → user thấy số dư ma.
      *
-     * Nếu Redis lỗi → CHỈ LOG warning, KHÔNG throw exception.
-     * Vì: Cache là bộ nhớ tạm, nếu mất → lần đọc tiếp sẽ query DB và cache lại.
-     * Giao dịch tài chính KHÔNG BAO GIỜ phụ thuộc vào cache.
+     * Giải pháp: đăng ký callback afterCommit qua TransactionSynchronizationManager.
+     * - Nếu transaction COMMIT → mới ghi Redis (số liệu chắc chắn đúng).
+     * - Nếu transaction ROLLBACK → callback KHÔNG chạy → cache không bị nhiễm bẩn
+     *   (lần đọc kế tiếp sẽ cache-miss và lấy số đúng từ DB).
+     *
+     * Nếu đang chạy NGOÀI transaction (hiếm) → ghi luôn để không mất tính năng cache.
+     *
+     * Redis lỗi → chỉ log warning, KHÔNG throw. Giao dịch tài chính không phụ thuộc cache.
      */
     private void updateBalanceCache(String accountId, BigDecimal newBalance) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    writeBalanceCache(accountId, newBalance);
+                }
+            });
+        } else {
+            writeBalanceCache(accountId, newBalance);
+        }
+    }
+
+    /**
+     * Ghi thực tế xuống Redis. Tách riêng để tái sử dụng cho cả 2 nhánh (trong/ngoài transaction).
+     */
+    private void writeBalanceCache(String accountId, BigDecimal newBalance) {
         try {
             String key = BALANCE_CACHE_PREFIX + accountId;
             redisTemplate.opsForValue().set(key, newBalance.toPlainString(), CACHE_TTL);

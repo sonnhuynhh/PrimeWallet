@@ -1,0 +1,73 @@
+# Fix #25: CI/CD — build + test tự động cho backend và mobile trên mỗi push/PR.
+#
+# - backend: biên dịch toàn bộ (main + test) và chạy unit test thuần Mockito.
+#   Test tích hợp contextLoads() cần Postgres/Kafka/Redis nên KHÔNG chạy ở đây;
+#   có thể bổ sung service container sau nếu muốn integration test đầy đủ.
+# - mobile: typecheck (tsc) + Jest.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Huỷ các lần chạy cũ trên cùng branch/PR khi có commit mới.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (build + unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+
+      # Biên dịch tất cả nguồn (bắt lỗi compile) rồi chạy unit test thuần.
+      # -Dtest=... giới hạn ở test không cần hạ tầng để CI ổn định (không flaky).
+      - name: Compile & run unit tests
+        run: ./mvnw -B -ntp test -Dtest=TransactionServiceTest,PaymentServiceTest -DfailIfNoTests=false
+
+      - name: Upload Surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+
+  mobile:
+    name: Mobile (typecheck + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: prime-wallet-mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: prime-wallet-mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test -- --ci

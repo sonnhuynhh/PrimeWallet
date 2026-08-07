@@ -3,12 +3,38 @@
 # Chạy: docker compose up -d
 # Tắt:  docker compose down
 # =============================================
-# File này định nghĩa 3 service hạ tầng:
-# 1. Zookeeper: Bộ điều phối cho Kafka (Kafka không chạy được nếu thiếu)
-# 2. Kafka: Message broker — trung tâm truyền sự kiện
-# 3. Redis: Cache — lưu tạm số dư ví để đọc nhanh
+# File này định nghĩa 4 service hạ tầng:
+# 1. PostgreSQL: Cơ sở dữ liệu chính (users, accounts, transactions, ledger)
+# 2. Zookeeper: Bộ điều phối cho Kafka (Kafka không chạy được nếu thiếu)
+# 3. Kafka: Message broker — trung tâm truyền sự kiện
+# 4. Redis: Cache — lưu tạm số dư ví để đọc nhanh
 
 services:
+
+  # ==================== POSTGRESQL ====================
+  # Cơ sở dữ liệu chính của hệ thống.
+  # App Spring Boot kết nối qua jdbc:postgresql://localhost:5432/primewallet_db
+  #
+  # Healthcheck dùng pg_isready để đảm bảo DB thực sự sẵn sàng
+  # trước khi app hoặc test cố gắng kết nối.
+  postgres:
+    image: postgres:16-alpine
+    container_name: primewallet-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: primewallet_db
+      POSTGRES_USER: postgres
+      # Mật khẩu đọc từ biến môi trường; mặc định "postgres" cho local dev.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d primewallet_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
   # ==================== ZOOKEEPER ====================
   # Zookeeper là "người quản lý" của Kafka cluster.
@@ -29,6 +55,13 @@ services:
       ZOOKEEPER_TICK_TIME: 2000            # Heartbeat interval (ms)
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data    # Persist data khi restart
+    healthcheck:
+      # Zookeeper trả về "imok" khi nhận lệnh "ruok" (are you ok)
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   # ==================== KAFKA ====================
   # Kafka là Message Broker — "bưu điện" chuyển sự kiện.
@@ -37,25 +70,35 @@ services:
   # Kafka nhận và chuyển event đó đến TẤT CẢ consumer đang lắng nghe
   # (Notification, Cache updater, AI fraud detection, ...)
   #
-  # Tại sao dùng Kafka thay vì RabbitMQ?
-  # - Kafka lưu message trên disk → không mất dữ liệu nếu consumer chết
-  # - Kafka xử lý hàng triệu message/giây (RabbitMQ chỉ vài chục nghìn)
-  # - Kafka cho phép replay message (đọc lại event cũ) — rất hữu ích cho debug
+  # Cấu hình 2 listener:
+  # - PLAINTEXT (localhost:9092): cho app Spring Boot chạy TRÊN HOST kết nối
+  # - INTERNAL (kafka:29092): cho các container khác trong cùng network kết nối
   kafka:
     image: confluentinc/cp-kafka:7.9.0
     container_name: kafka
     depends_on:
-      - zookeeper              # Phải chờ Zookeeper chạy trước
+      zookeeper:
+        condition: service_healthy   # Chờ Zookeeper THỰC SỰ sẵn sàng (không chỉ start)
     ports:
       - "9092:9092"            # Port cho app Spring Boot kết nối
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181     # Kết nối đến Zookeeper
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092   # Địa chỉ Kafka public
+      # Dual listeners: LISTENER_HOST cho host, LISTENER_INTERNAL cho container-to-container
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_HOST:PLAINTEXT,LISTENER_INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: LISTENER_HOST://0.0.0.0:9092,LISTENER_INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_HOST://localhost:9092,LISTENER_INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1   # Chỉ 1 broker → replication = 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"    # Tắt auto-create topic (ta tạo thủ công qua code)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"     # Bật auto-create topic để đơn giản hoá dev
     volumes:
       - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
 
   # ==================== REDIS ====================
   # Redis là In-Memory Cache — "bộ nhớ tạm siêu nhanh".
@@ -73,13 +116,32 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
+    # Fix #29: Bật mật khẩu Redis khi biến REDIS_PASSWORD được đặt.
+    # Để trống (mặc định) → không auth, giữ nguyên trải nghiệm local dev.
+    # $$REDIS_PASSWORD: $$ được Compose escape thành $ → shell trong container
+    # đọc biến môi trường REDIS_PASSWORD (set bên dưới).
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: >-
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+               exec redis-server --requirepass "$$REDIS_PASSWORD";
+             else
+               exec redis-server;
+             fi'
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG; else redis-cli ping | grep PONG; fi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
 # ==================== VOLUMES ====================
 # Docker Volumes giữ dữ liệu khi container restart.
-# Không dùng volume → mỗi lần restart, Kafka mất hết topic, Redis mất hết cache.
+# Không dùng volume → mỗi lần restart, Postgres mất hết dữ liệu, Kafka mất topic, Redis mất cache.
 volumes:
+  postgres_data:
   zookeeper_data:
   kafka_data:
   redis_data:

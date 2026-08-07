@@ -240,24 +240,36 @@ public class TransactionService {
         // 2. Kiểm tra user có bị khóa hoặc cần KYC không
         validateUserForTransaction(userId, request.getAmount());
 
-        // 2. Lấy ví gửi (ví chính VNĐ của user hiện tại)
-        Account sourceAccount = accountRepository
+        // 3. Lấy ví gửi (ví chính VNĐ của user hiện tại) — chưa khóa, chỉ để lấy ID
+        Account sourceRef = accountRepository
                 .findByUserIdAndCurrencyAndAccountType(userId, "VND", "PRIMARY")
                 .orElseThrow(() -> new ResourceNotFoundException("Chưa có ví. Vui lòng tạo ví trước."));
 
-        // 3. KHÓA ví gửi (Pessimistic Lock)
-        sourceAccount = accountRepository.findByIdWithLock(sourceAccount.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví gửi"));
-
-        // 4. Tìm ví nhận theo số tài khoản
-        Account destAccount = accountRepository.findByAccountNumber(request.getDestinationAccountNumber())
+        // 4. Tìm ví nhận theo số tài khoản — chưa khóa, chỉ để lấy ID
+        Account destRef = accountRepository.findByAccountNumber(request.getDestinationAccountNumber())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Không tìm thấy ví nhận với số tài khoản: " + request.getDestinationAccountNumber()));
 
-        // 5. Validate
-        if (sourceAccount.getId().equals(destAccount.getId())) {
+        // 5. Không cho chuyển cho chính mình
+        if (sourceRef.getId().equals(destRef.getId())) {
             throw new IllegalArgumentException("Không thể chuyển tiền cho chính mình");
         }
+
+        // 6. KHÓA CẢ 2 VÍ (CRITICAL FIX #2)
+        //    - Trước đây chỉ khóa ví gửi → ví nhận bị Race Condition (mất tiền CREDIT).
+        //    - Khóa theo THỨ TỰ ID CỐ ĐỊNH (UUID nhỏ trước) để tránh DEADLOCK
+        //      khi 2 giao dịch A→B và B→A chạy đồng thời.
+        Account sourceAccount;
+        Account destAccount;
+        if (sourceRef.getId().compareTo(destRef.getId()) < 0) {
+            sourceAccount = lockAccount(sourceRef.getId(), "ví gửi");
+            destAccount = lockAccount(destRef.getId(), "ví nhận");
+        } else {
+            destAccount = lockAccount(destRef.getId(), "ví nhận");
+            sourceAccount = lockAccount(sourceRef.getId(), "ví gửi");
+        }
+
+        // 7. Validate trạng thái ví (sau khi đã khóa và đọc số dư mới nhất)
         validateAccountActive(sourceAccount);
         validateAccountActive(destAccount);
 
@@ -267,7 +279,7 @@ public class TransactionService {
                             sourceAccount.getBalance(), request.getAmount()));
         }
 
-        // 6. Tạo Transaction (TRANSFER)
+        // 8. Tạo Transaction (TRANSFER)
         Transaction transaction = Transaction.builder()
                 .idempotencyKey(request.getIdempotencyKey())
                 .referenceNumber(referenceNumberGenerator.generateTransactionReference())
@@ -281,23 +293,23 @@ public class TransactionService {
                 .build();
         transaction = transactionRepository.save(transaction);
 
-        // 7. GHI SỔ KÉP (Double-Entry) — Đây là bước quan trọng nhất!
-        //    Bước 7a: DEBIT ví gửi (trừ tiền)
+        // 9. GHI SỔ KÉP (Double-Entry) — Đây là bước quan trọng nhất!
+        //    Bước 9a: DEBIT ví gửi (trừ tiền)
         ledgerService.debit(sourceAccount, transaction, request.getAmount());
-        //    Bước 7b: CREDIT ví nhận (cộng tiền)
+        //    Bước 9b: CREDIT ví nhận (cộng tiền)
         ledgerService.credit(destAccount, transaction, request.getAmount());
 
-        // 8. Cập nhật trạng thái
+        // 10. Cập nhật trạng thái
         transaction.setStatus(TransactionStatus.SUCCESS);
         transaction = transactionRepository.save(transaction);
 
-        // 9. Phát event lên Kafka
+// 11. Phát event lên Kafka
         eventPublisher.publish(buildEvent(transaction, userId));
 
         log.info("Chuyển tiền thành công: {} VNĐ từ {} → {}",
                 request.getAmount(), sourceAccount.getAccountNumber(), destAccount.getAccountNumber());
 
-        // 10. Ghi audit log
+        // 12. Ghi audit log
         auditService.log(userId, "TRANSFER",
                 String.format("Chuyển %s VNĐ từ %s → %s",
                         request.getAmount(), sourceAccount.getAccountNumber(), destAccount.getAccountNumber()), null);
@@ -305,13 +317,36 @@ public class TransactionService {
         return toResponse(transaction);
     }
 
+    /**
+     * Khóa một ví bằng Pessimistic Write Lock và trả về entity đã khóa.
+     * Dùng chung cho withdraw và transfer để tránh lặp code.
+     */
+    private Account lockAccount(UUID accountId, String label) {
+        return accountRepository.findByIdWithLock(accountId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy " + label));
+    }
+
     // ==================== LỊCH SỬ GIAO DỊCH ====================
 
     /**
      * Lấy lịch sử giao dịch của một tài khoản (phân trang).
+     *
+     * Fix #5 (IDOR): BẮT BUỘC kiểm tra ví thuộc về user đang đăng nhập trước khi
+     * trả dữ liệu. Nếu không, User A có thể xem lịch sử giao dịch của User B chỉ
+     * bằng cách đoán/đổi accountId trên URL.
+     *
+     * @param accountId ví cần xem lịch sử
+     * @param userId    user đang đăng nhập (từ JWT)
      */
     @Transactional(readOnly = true)
-    public Page<TransactionResponse> getTransactionHistory(UUID accountId, Pageable pageable) {
+    public Page<TransactionResponse> getTransactionHistory(UUID accountId, UUID userId, Pageable pageable) {
+        Account account = accountRepository.findById(accountId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví"));
+
+        if (!account.getUser().getId().equals(userId)) {
+            throw new UnauthorizedAccessException("Bạn không có quyền xem lịch sử giao dịch của ví này");
+        }
+
         return transactionRepository.findByAccountId(accountId, pageable)
                 .map(this::toResponse);
     }
