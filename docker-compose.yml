@@ -56,8 +56,10 @@ services:
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data    # Persist data khi restart
     healthcheck:
-      # Zookeeper trả về "imok" khi nhận lệnh "ruok" (are you ok)
-      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+      # Image cp-zookeeper chỉ bật sẵn lệnh 4lw "srvr" (whitelist mặc định),
+      # nên KHÔNG dùng "ruok" — nó luôn trả về "not in the whitelist"
+      # và làm Kafka treo vĩnh viễn ở điều kiện service_healthy.
+      test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep -q Zookeeper"]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -76,6 +76,7 @@ export interface EstimateGasRequest {
   toAddress: string;
   amount: string; // native: ETH; token: số lượng token (VD "100")
   tokenAddress?: string; // bỏ trống = native coin
+  tokenDecimals?: number; // kèm theo tokenAddress — backend quy đổi ra raw units
 }
 
 export async function estimateGas(payload: EstimateGasRequest): Promise<EstimateGasData> {
@@ -123,6 +124,30 @@ export async function sendTransaction(payload: {
   tokenAddress?: string;
 }): Promise<SendTransactionData> {
   return request<SendTransactionData>("/api/v1/crypto/transactions/send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Ghi sổ giao dịch ĐÃ được ví ngoài (MetaMask/OKX/WalletConnect) phát lên mạng.
+ *
+ * Ví ngoài giữ khoá trong extension và tự broadcast qua `eth_sendTransaction`,
+ * nên không có signed hex để backend phát lại như `sendTransaction`. Endpoint này
+ * chỉ lưu lịch sử in-app + phát Kafka event cho AI.
+ */
+export async function recordTransaction(payload: {
+  blockchainNetwork: string;
+  transactionHash: string;
+  fromAddress: string;
+  toAddress: string;
+  amount: string;
+  symbol: string;
+  tokenAddress?: string;
+  type?: string;
+  description?: string;
+}): Promise<SendTransactionData> {
+  return request<SendTransactionData>("/api/v1/crypto/transactions/record", {
     method: "POST",
     body: JSON.stringify(payload),
   });

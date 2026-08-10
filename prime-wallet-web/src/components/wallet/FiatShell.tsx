@@ -1,17 +1,44 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Wallet, Plus, ArrowRightLeft, Receipt, UserCircle, ShieldAlert, CheckCircle2, ArrowDownLeft, Pencil, Lock } from 'lucide-react';
+import {
+  Wallet, Plus, ArrowRightLeft, Receipt, UserCircle, ShieldAlert, CheckCircle2,
+  ArrowDownLeft, Pencil, Lock, TrendingUp, TrendingDown,
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { WalletLayout } from './WalletLayout';
-import { Card } from '../ui/Card';
+import { Card, CardHeader } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
+import { Badge } from '../ui/Badge';
+import { TabBar, type TabItem } from '../ui/TabBar';
+import { SkeletonRow } from '../ui/Skeleton';
+import { WidgetBoundary } from '../error/Boundaries';
+import { BorderBeam } from '@/components/effects/BorderBeam';
+import { toastOk, toastErr } from '../feedback/toast';
 import { createPaymentUrl } from '../../services/payment';
 import { transfer, withdraw, getTransactionHistory, getMyAccounts } from '../../services/wallet';
 import type { TransactionResponse } from '../../types/api';
 import { createIdempotencyKey } from '../../utils/uuid';
+import { setCryptoTabIntent } from '@/lib/navIntent';
 import { AiInsightsPanel } from '../ai/AiInsightsPanel';
+import { fmtVnd, fmtNumber } from '@/lib/utils';
+
+type FiatTab = 'overview' | 'history' | 'profile';
+
+const TABS: readonly TabItem<FiatTab>[] = [
+  { id: 'overview', label: 'Tổng quan', icon: Wallet },
+  { id: 'history', label: 'Lịch sử', icon: Receipt },
+  { id: 'profile', label: 'Hồ sơ', icon: UserCircle },
+];
+
+const BILL_PROVIDERS = [
+  'Điện lực EVN',
+  'Nước sạch Sawaco',
+  'Internet VNPT',
+  'Internet FPT',
+] as const;
 
 /**
  * Ví Fiat — giao diện riêng cho tài khoản VND.
@@ -19,10 +46,10 @@ import { AiInsightsPanel } from '../ai/AiInsightsPanel';
  * hồ sơ cá nhân + chỉnh sửa thông tin + đổi mật khẩu.
  */
 export function FiatShell() {
-  const { session, reloadSession, updateProfile, changePassword } = useAuth();
+  const navigate = useNavigate();
+  const { session, reloadSession, updateProfile, changePassword, setActiveWalletMode } = useAuth();
 
-  // ===== Fiat tabs =====
-  const [tab, setTab] = useState<'overview' | 'history' | 'profile'>('overview');
+  const [tab, setTab] = useState<FiatTab>('overview');
 
   // ===== Modals =====
   const [depositOpen, setDepositOpen] = useState(false);
@@ -42,7 +69,7 @@ export function FiatShell() {
   const [transferLoading, setTransferLoading] = useState(false);
 
   // ===== Bill =====
-  const [billProvider, setBillProvider] = useState('Điện lực EVN');
+  const [billProvider, setBillProvider] = useState<string>(BILL_PROVIDERS[0]);
   const [billCode, setBillCode] = useState('');
   const [billAmount, setBillAmount] = useState('');
   const [billLoading, setBillLoading] = useState(false);
@@ -73,7 +100,7 @@ export function FiatShell() {
         setFiatHistory(res.content);
       }
     } catch (e) {
-      console.warn('Không tải được lịch sử', e);
+      toastErr(e, 'Không tải được lịch sử giao dịch');
     } finally {
       setFiatLoading(false);
     }
@@ -82,6 +109,21 @@ export function FiatShell() {
   useEffect(() => {
     if (tab === 'history') loadHistory();
   }, [tab]);
+
+  // Reload số dư khi popup VNPAY đóng hoặc báo thành công
+  useEffect(() => {
+    const onFocus = () => void reloadSession();
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'vnpay:success') void reloadSession();
+    };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('message', onMessage);
+    };
+  }, [reloadSession]);
 
   // ===== Handlers =====
   const handleDeposit = async (e: React.FormEvent) => {
@@ -95,8 +137,9 @@ export function FiatShell() {
       window.open(res.paymentUrl, 'VNPAY', `width=${width},height=${height},left=${left},top=${top}`);
       setDepositOpen(false);
       setDepositAmount('');
-    } catch (err: any) {
-      alert('Lỗi nạp tiền: ' + err.message);
+      toastOk('Đã mở cổng VNPAY', 'Hoàn tất thanh toán ở cửa sổ vừa mở để cộng tiền vào ví.');
+    } catch (err) {
+      toastErr(err, 'Không tạo được yêu cầu nạp tiền');
     } finally {
       setDepositLoading(false);
     }
@@ -113,11 +156,11 @@ export function FiatShell() {
         description: transferDesc,
       });
       await reloadSession();
-      alert('Chuyển tiền thành công!');
+      toastOk('Chuyển tiền thành công', `${fmtVnd(Number(transferAmount))} → ${transferAccount}`);
       setTransferOpen(false);
       setTransferAccount(''); setTransferAmount(''); setTransferDesc('');
-    } catch (err: any) {
-      alert('Lỗi chuyển tiền: ' + err.message);
+    } catch (err) {
+      toastErr(err, 'Chuyển tiền thất bại');
     } finally {
       setTransferLoading(false);
     }
@@ -133,11 +176,11 @@ export function FiatShell() {
         description: `Thanh toán hóa đơn ${billProvider} - Mã: ${billCode}`,
       });
       await reloadSession();
-      alert('Thanh toán hóa đơn thành công!');
+      toastOk('Thanh toán hóa đơn thành công', `${billProvider} · ${fmtVnd(Number(billAmount))}`);
       setBillOpen(false);
       setBillCode(''); setBillAmount('');
-    } catch (err: any) {
-      alert('Lỗi thanh toán: ' + err.message);
+    } catch (err) {
+      toastErr(err, 'Thanh toán hóa đơn thất bại');
     } finally {
       setBillLoading(false);
     }
@@ -155,9 +198,9 @@ export function FiatShell() {
       setEditSaving(true);
       await updateProfile({ fullName: editFullName, dateOfBirth: editDob || null });
       setEditProfileOpen(false);
-      alert('Cập nhật thông tin thành công!');
-    } catch (err: any) {
-      alert('Lỗi cập nhật: ' + err.message);
+      toastOk('Cập nhật thông tin thành công');
+    } catch (err) {
+      toastErr(err, 'Cập nhật thông tin thất bại');
     } finally {
       setEditSaving(false);
     }
@@ -166,7 +209,7 @@ export function FiatShell() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (pwdNew !== pwdConfirm) {
-      alert('Mật khẩu xác nhận không khớp!');
+      toastErr('Mật khẩu xác nhận không khớp');
       return;
     }
     try {
@@ -176,12 +219,12 @@ export function FiatShell() {
         newPassword: pwdNew,
         confirmNewPassword: pwdConfirm,
       });
-      alert('Đổi mật khẩu thành công! Vui lòng đăng nhập lại.');
+      toastOk('Đổi mật khẩu thành công', 'Nên đăng xuất rồi đăng nhập lại bằng mật khẩu mới.');
       setChangePwdOpen(false);
       setPwdCurrent(''); setPwdNew(''); setPwdConfirm('');
       // Đổi mật khẩu không invalidate token ngay, user có thể tự đăng xuất.
-    } catch (err: any) {
-      alert('Lỗi đổi mật khẩu: ' + err.message);
+    } catch (err) {
+      toastErr(err, 'Đổi mật khẩu thất bại');
     } finally {
       setPwdSaving(false);
     }
@@ -190,256 +233,272 @@ export function FiatShell() {
   const kycBadge = () => {
     const k = session?.profile.kycStatus;
     if (k === 'VERIFIED')
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-bold"><CheckCircle2 className="w-3.5 h-3.5" /> Đã xác minh</span>;
+      return (
+        <Badge variant="success">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Đã xác minh
+        </Badge>
+      );
     if (k === 'PENDING')
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-400 text-xs font-bold"><Receipt className="w-3.5 h-3.5" /> Đang chờ duyệt</span>;
-    return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/15 border border-red-500/40 text-red-400 text-xs font-bold"><ShieldAlert className="w-3.5 h-3.5" /> Chưa xác minh</span>;
+      return (
+        <Badge variant="warning">
+          <Receipt className="h-3.5 w-3.5" /> Đang chờ duyệt
+        </Badge>
+      );
+    return (
+      <Badge variant="danger">
+        <ShieldAlert className="h-3.5 w-3.5" /> Chưa xác minh
+      </Badge>
+    );
   };
-
-  const txSign = (tx: TransactionResponse) => {
-    const positive = tx.transactionType === 'TOPUP' || (tx.transactionType === 'TRANSFER' && Number(tx.amount) >= 0);
-    return {
-      plus: positive,
-      sign: positive ? '+' : '-',
-      color: positive ? 'text-emerald-400' : 'text-red-400',
-    };
-  };
-
-  const tabs = [
-    { id: 'overview' as const, label: 'Tổng quan', icon: Wallet },
-    { id: 'history' as const, label: 'Lịch sử', icon: Receipt },
-    { id: 'profile' as const, label: 'Hồ sơ', icon: UserCircle },
-  ];
 
   return (
-    <WalletLayout
-      accent="emerald"
-      title="Ví Fiat (VND)"
-      subtitle="Tài khoản tiền Việt Nam của bạn"
-    >
-      {/* Tabs */}
-      <div className="flex gap-2 mb-8">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${
-              tab === t.id
-                ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-400'
-                : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <t.icon className="w-4 h-4" />
-            {t.label}
-          </button>
-        ))}
-      </div>
+    <WalletLayout accent="emerald" title="Ví Fiat (VND)" subtitle="Tài khoản tiền Việt Nam của bạn">
+      <TabBar
+        tabs={TABS}
+        value={tab}
+        onChange={setTab}
+        layoutId="fiat-tab"
+        className="mb-6 w-full sm:mb-8"
+      />
 
-      {tab === 'overview' && (
-        <motion.div key="overview" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-          {/* Balance card */}
-          <Card className="border-emerald-500/20 relative overflow-hidden">
-            <div className="absolute -top-16 -right-16 w-64 h-64 bg-emerald-500/10 blur-3xl rounded-full" />
-            <div className="relative">
-              <p className="text-slate-400 text-sm font-semibold mb-2 flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-emerald-400" /> Số dư khả dụng
+      <WidgetBoundary key={tab} label="Ví Fiat">
+        {tab === 'overview' && (
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            {/* Balance card */}
+            <Card className="relative overflow-hidden">
+              <BorderBeam />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[--color-primary-soft] blur-3xl"
+              />
+              <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-[--color-muted-foreground]">
+                <Wallet className="h-4 w-4 text-[--color-primary]" /> Số dư khả dụng
               </p>
-              <div className="flex items-baseline gap-2">
-                <h1 className="text-5xl font-black text-white">{fmtNumber(balance)}</h1>
-                <span className="text-2xl text-emerald-400 font-bold">VND</span>
+              <div className="flex items-baseline gap-3">
+                <h1 className="font-display text-5xl font-black tracking-tight text-white md:text-6xl">
+                  {fmtNumber(balance, 0)}
+                </h1>
+                <span className="text-2xl font-black text-[--color-primary]">VND</span>
               </div>
-              <div className="mt-3 flex items-center gap-2 text-sm">
-                <p className="text-slate-500">Số tài khoản:</p>
-                <p className="font-mono font-bold text-slate-300">{session?.account?.accountNumber}</p>
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[--color-border] bg-[--color-surface-2] px-3 py-1.5 text-sm">
+                <p className="text-[--color-muted-foreground]">Số tài khoản</p>
+                <p className="font-mono font-bold text-white">{session?.account?.accountNumber}</p>
               </div>
 
-              <div className="mt-8 grid grid-cols-3 gap-4">
-                <Button onClick={() => setDepositOpen(true)} variant="primary" title="Nạp Tiền" className="flex-1" />
-                <Button onClick={() => setTransferOpen(true)} variant="secondary" title="Chuyển Tiền" className="flex-1" />
-                <Button onClick={() => setBillOpen(true)} title="Thanh Toán Hóa Đơn" className="flex-1 bg-amber-500/10 text-amber-500 border border-amber-500/30 hover:bg-amber-500/20" />
-              </div>
-            </div>
-          </Card>
-
-          {/* AI Insights */}
-          <AiInsightsPanel />
-
-          {/* Quick actions / recent */}
-          <div className="grid md:grid-cols-2 gap-6">
-            <Card className="border-emerald-500/10">
-              <h3 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
-                <ArrowRightLeft className="w-5 h-5 text-emerald-400" /> Tính năng Fiat nhanh
-              </h3>
-              <div className="space-y-3">
-                <button onClick={() => setDepositOpen(true)} className="w-full flex items-center gap-3 p-3 rounded-xl bg-slate-900 hover:bg-slate-800 transition-colors border border-slate-800">
-                  <span className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center"><Plus className="w-5 h-5 text-emerald-400" /></span>
-                  <span className="text-sm font-bold text-slate-200">Nạp tiền qua VNPAY</span>
-                </button>
-                <button onClick={() => setTransferOpen(true)} className="w-full flex items-center gap-3 p-3 rounded-xl bg-slate-900 hover:bg-slate-800 transition-colors border border-slate-800">
-                  <span className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center"><ArrowRightLeft className="w-5 h-5 text-emerald-400" /></span>
-                  <span className="text-sm font-bold text-slate-200">Chuyển tiền VND</span>
-                </button>
-                <button onClick={() => setBillOpen(true)} className="w-full flex items-center gap-3 p-3 rounded-xl bg-slate-900 hover:bg-slate-800 transition-colors border border-slate-800">
-                  <span className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center"><Receipt className="w-5 h-5 text-amber-400" /></span>
-                  <span className="text-sm font-bold text-slate-200">Thanh toán hóa đơn</span>
-                </button>
+              <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                <Button onClick={() => setDepositOpen(true)}>
+                  <Plus className="h-4 w-4" /> Nạp tiền
+                </Button>
+                <Button variant="secondary" onClick={() => setTransferOpen(true)}>
+                  <ArrowRightLeft className="h-4 w-4" /> Chuyển tiền
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setBillOpen(true)}
+                  className="border-[--color-warning]/30 bg-[--color-warning]/10 text-[--color-warning] hover:bg-[--color-warning]/20"
+                >
+                  <Receipt className="h-4 w-4" /> Hóa đơn
+                </Button>
               </div>
             </Card>
 
-            <Card className="border-transparent bg-slate-900/60">
-              <h3 className="flex items-center gap-2 text-lg font-bold text-white mb-4"><UserCircle className="w-5 h-5 text-emerald-400" /> Thông tin tài khoản</h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700">
-                    <p className="text-xs text-slate-500 mb-1">Chủ tài khoản</p>
-                    <p className="font-bold text-white">{session?.profile.fullName}</p>
-                  </div>
-                  <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700">
-                    <p className="text-xs text-slate-500 mb-1">Trạng thái KYC</p>
-                    <div className="mt-1">{kycBadge()}</div>
-                  </div>
+            {/* AI Insights */}
+            <AiInsightsPanel />
+
+            <div className="grid gap-6 md:grid-cols-2">
+              <Card>
+                <CardHeader title="Tính năng Fiat nhanh" icon={<ArrowRightLeft className="h-5 w-5" />} />
+                <div className="space-y-3">
+                  <QuickAction icon={Plus} label="Nạp tiền qua VNPAY" onClick={() => setDepositOpen(true)} />
+                  <QuickAction
+                    icon={ArrowDownLeft}
+                    label="Đổi từ Crypto"
+                    onClick={() => {
+                      setActiveWalletMode('crypto');
+                      setCryptoTabIntent('bridge');
+                      navigate('/crypto');
+                    }}
+                  />
+                  <QuickAction icon={ArrowRightLeft} label="Chuyển tiền VND" onClick={() => setTransferOpen(true)} />
+                  <QuickAction icon={Receipt} label="Thanh toán hóa đơn" tone="amber" onClick={() => setBillOpen(true)} />
                 </div>
+              </Card>
+
+              <Card>
+                <CardHeader title="Thông tin tài khoản" icon={<UserCircle className="h-5 w-5" />} />
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700">
-                    <p className="text-xs text-slate-500 mb-1">Số điện thoại</p>
-                    <p className="font-bold text-white">{session?.profile.phone || 'Chưa cập nhật'}</p>
+                  <Field label="Chủ tài khoản" value={session?.profile.fullName} />
+                  <div className="rounded-2xl border border-[--color-border] bg-[--color-surface-2] p-4">
+                    <p className="mb-2 text-xs text-[--color-muted-foreground]">Trạng thái KYC</p>
+                    {kycBadge()}
                   </div>
-                  <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700">
-                    <p className="text-xs text-slate-500 mb-1">Ngày sinh</p>
-                    <p className="font-bold text-white">{session?.profile.dateOfBirth || '—'}</p>
-                  </div>
+                  <Field label="Số điện thoại" value={session?.profile.phone || 'Chưa cập nhật'} />
+                  <Field label="Ngày sinh" value={session?.profile.dateOfBirth || '—'} />
                 </div>
-                <button onClick={() => { setTab('profile'); }} className="w-full text-left text-sm font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
+                <button
+                  onClick={() => setTab('profile')}
+                  className="mt-4 flex items-center gap-1 text-sm font-bold text-[--color-primary] transition-colors hover:brightness-125"
+                >
                   Quản lý hồ sơ & bảo mật <Pencil size={14} />
                 </button>
-              </div>
-            </Card>
-          </div>
-        </motion.div>
-      )}
-
-      {tab === 'history' && (
-        <motion.div key="history" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-          <Card>
-            <h3 className="flex items-center gap-2 text-lg font-bold text-white mb-4"><Receipt className="w-5 h-5 text-emerald-400" /> Lịch sử giao dịch</h3>
-            {fiatLoading ? (
-              <p className="text-slate-400 text-center py-6">Đang tải lịch sử...</p>
-            ) : fiatHistory.length === 0 ? (
-              <p className="text-slate-500 text-center py-6">Chưa có giao dịch nào.</p>
-            ) : (
-              <div className="space-y-3">
-                {fiatHistory.map((tx) => {
-                  const s = txSign(tx);
-                  return (
-                    <div key={tx.id} className="flex items-center justify-between p-4 rounded-xl bg-slate-900 border border-slate-800">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${s.plus ? 'bg-emerald-500/15' : 'bg-red-500/15'}`}>
-                          {s.plus ? <ArrowDownLeft className="w-5 h-5 text-emerald-400" /> : <ArrowRightLeft className="w-5 h-5 text-red-400" />}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="font-bold text-white truncate">{tx.description}</p>
-                          <p className="text-xs text-slate-500">{new Date(tx.createdAt).toLocaleString('vi-VN')} · {tx.referenceNumber}</p>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0 ml-4">
-                        <p className={`font-black ${s.color}`}>{s.sign}{fmtNumber(Math.abs(Number(tx.amount)))} VND</p>
-                        <p className="text-xs text-slate-500 font-bold">{tx.transactionType}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
-        </motion.div>
-      )}
-
-      {tab === 'profile' && (
-        <motion.div key="profile" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-          <Card>
-            <div className="flex items-center gap-5 border-b border-slate-800 pb-6">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 flex items-center justify-center">
-                <UserCircle className="w-8 h-8 text-emerald-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">{session?.profile.fullName}</h2>
-                <p className="text-sm text-slate-400">{session?.profile.email}</p>
-                <div className="mt-2">{kycBadge()}</div>
-              </div>
+              </Card>
             </div>
+          </motion.div>
+        )}
 
-            <div className="grid grid-cols-2 gap-4 mt-6">
-              <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-                <p className="text-xs text-slate-500 mb-1">Số điện thoại</p>
-                <p className="font-bold text-white">{session?.profile.phone || 'Chưa cập nhật'}</p>
+        {tab === 'history' && (
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+            <Card>
+              <CardHeader
+                title="Lịch sử giao dịch"
+                icon={<Receipt className="h-5 w-5" />}
+                description="Giao dịch VND gần đây của tài khoản."
+              />
+              {fiatLoading ? (
+                <div className="divide-y divide-[--color-border]">
+                  {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}
+                </div>
+              ) : fiatHistory.length === 0 ? (
+                <p className="py-8 text-center text-[--color-muted-foreground]">Chưa có giao dịch nào.</p>
+              ) : (
+                <div className="space-y-2">
+                  {fiatHistory.map((tx) => <FiatTxRow key={tx.id} tx={tx} />)}
+                </div>
+              )}
+            </Card>
+          </motion.div>
+        )}
+
+        {tab === 'profile' && (
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+            <Card>
+              <div className="flex items-center gap-5 border-b border-[--color-border] pb-6">
+                <div className="grid h-16 w-16 place-items-center rounded-2xl border border-[--color-primary]/20 bg-[--color-primary-soft]">
+                  <UserCircle className="h-8 w-8 text-[--color-primary]" />
+                </div>
+                <div>
+                  <h2 className="font-display text-xl font-black text-white">{session?.profile.fullName}</h2>
+                  <p className="text-sm text-[--color-muted-foreground]">{session?.profile.email}</p>
+                  <div className="mt-2">{kycBadge()}</div>
+                </div>
               </div>
-              <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-                <p className="text-xs text-slate-500 mb-1">Ngày sinh</p>
-                <p className="font-bold text-white">{session?.profile.dateOfBirth || '—'}</p>
+
+              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                <Field label="Số điện thoại" value={session?.profile.phone || 'Chưa cập nhật'} />
+                <Field label="Ngày sinh" value={session?.profile.dateOfBirth || '—'} />
+                <Field label="Cấp độ tài khoản" value="Tiêu chuẩn" accent />
+                <Field
+                  label="Ngày tham gia"
+                  value={session?.profile.createdAt ? new Date(session.profile.createdAt).toLocaleDateString('vi-VN') : '—'}
+                />
               </div>
-              <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-                <p className="text-xs text-slate-500 mb-1">Cấp độ tài khoản</p>
-                <p className="font-bold text-emerald-400">Tiêu chuẩn</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-                <p className="text-xs text-slate-500 mb-1">Ngày tham gia</p>
-                <p className="font-bold text-white">{session?.profile.createdAt ? new Date(session.profile.createdAt).toLocaleDateString('vi-VN') : '—'}</p>
-              </div>
+            </Card>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              <Card>
+                <CardHeader title="Hồ sơ cá nhân" icon={<Pencil className="h-5 w-5" />} />
+                <Button variant="secondary" onClick={openEditProfile}>Chỉnh sửa hồ sơ</Button>
+              </Card>
+              <Card>
+                <CardHeader title="Bảo mật" icon={<Lock className="h-5 w-5" />} />
+                <Button variant="secondary" onClick={() => setChangePwdOpen(true)}>Đổi mật khẩu</Button>
+              </Card>
             </div>
-          </Card>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            <Card className="border-transparent">
-              <h3 className="flex items-center gap-2 text-lg font-bold text-white mb-4"><Pencil className="w-5 h-5 text-emerald-400" /> Hồ sơ cá nhân</h3>
-              <Button variant="secondary" title="Chỉnh sửa hồ sơ" onClick={openEditProfile} />
-            </Card>
-            <Card className="border-transparent">
-              <h3 className="flex items-center gap-2 text-lg font-bold text-white mb-4"><Lock className="w-5 h-5 text-emerald-400" /> Bảo mật</h3>
-              <Button variant="secondary" title="Đổi mật khẩu" onClick={() => setChangePwdOpen(true)} />
-            </Card>
-          </div>
-        </motion.div>
-      )}
+          </motion.div>
+        )}
+      </WidgetBoundary>
 
       {/* ===== Modals ===== */}
-      <Modal isOpen={depositOpen} onClose={() => setDepositOpen(false)} title="Nạp Tiền VNPAY">
+      <Modal isOpen={depositOpen} onClose={() => setDepositOpen(false)} title="Nạp tiền VNPAY">
         <form onSubmit={handleDeposit} className="space-y-6">
-          <Input label="Số tiền cần nạp (VND)" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} type="number" placeholder="VD: 100000" required />
-          <Button type="submit" title="Xác nhận Nạp" loading={depositLoading} />
+          <Input
+            label="Số tiền cần nạp (VND)"
+            value={depositAmount}
+            onChange={(e) => setDepositAmount(e.target.value)}
+            type="number"
+            min="1000"
+            placeholder="VD: 100000"
+            hint="VNPAY sandbox — số tiền tối thiểu 1.000 VND."
+            required
+          />
+          <Button type="submit" loading={depositLoading}>Xác nhận nạp</Button>
         </form>
       </Modal>
 
-      <Modal isOpen={transferOpen} onClose={() => setTransferOpen(false)} title="Chuyển Tiền VND">
+      <Modal isOpen={transferOpen} onClose={() => setTransferOpen(false)} title="Chuyển tiền VND">
         <form onSubmit={handleTransfer} className="space-y-6">
-          <Input label="Số tài khoản nhận" value={transferAccount} onChange={(e) => setTransferAccount(e.target.value)} placeholder="PW00001234" required />
-          <Input label="Số tiền (VND)" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} type="number" placeholder="100000" required />
-          <Input label="Nội dung" value={transferDesc} onChange={(e) => setTransferDesc(e.target.value)} placeholder="Chuyển tiền ăn trưa..." required />
-          <Button type="submit" title="Thực hiện chuyển" loading={transferLoading} />
+          <Input
+            label="Số tài khoản nhận"
+            value={transferAccount}
+            onChange={(e) => setTransferAccount(e.target.value)}
+            placeholder="PW00001234"
+            required
+          />
+          <Input
+            label="Số tiền (VND)"
+            value={transferAmount}
+            onChange={(e) => setTransferAmount(e.target.value)}
+            type="number"
+            placeholder="100000"
+            hint={`Số dư khả dụng: ${fmtVnd(balance)}`}
+            required
+          />
+          <Input
+            label="Nội dung"
+            value={transferDesc}
+            onChange={(e) => setTransferDesc(e.target.value)}
+            placeholder="Chuyển tiền ăn trưa..."
+            required
+          />
+          <Button type="submit" loading={transferLoading}>Thực hiện chuyển</Button>
         </form>
       </Modal>
 
-      <Modal isOpen={billOpen} onClose={() => setBillOpen(false)} title="Thanh Toán Hóa Đơn">
+      <Modal isOpen={billOpen} onClose={() => setBillOpen(false)} title="Thanh toán hóa đơn">
         <form onSubmit={handleBill} className="space-y-6">
-          <div className="space-y-1">
-            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Nhà cung cấp</label>
-            <select value={billProvider} onChange={(e) => setBillProvider(e.target.value)} className="w-full bg-slate-900 p-4 rounded-xl border border-slate-700 text-white outline-none focus:border-emerald-500">
-              <option value="Điện lực EVN">Điện lực EVN</option>
-              <option value="Nước sạch Sawaco">Nước sạch Sawaco</option>
-              <option value="Internet VNPT">Internet VNPT</option>
-              <option value="Internet FPT">Internet FPT</option>
+          <div className="space-y-1.5">
+            <label htmlFor="bill-provider" className="text-sm font-semibold text-slate-300">
+              Nhà cung cấp
+            </label>
+            <select
+              id="bill-provider"
+              value={billProvider}
+              onChange={(e) => setBillProvider(e.target.value)}
+              className="w-full rounded-2xl border border-[--color-border] bg-[--color-surface-2] p-4 text-white outline-none transition-colors focus:border-[--color-primary] focus:ring-2 focus:ring-[--color-ring]"
+            >
+              {BILL_PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <Input label="Mã khách hàng (mã hóa đơn)" value={billCode} onChange={(e) => setBillCode(e.target.value)} placeholder="PE0123456789" required />
-          <Input label="Số tiền thanh toán (VND)" value={billAmount} onChange={(e) => setBillAmount(e.target.value)} type="number" placeholder="100000" required />
-          <Button type="submit" title="Thanh toán" loading={billLoading} />
+          <Input
+            label="Mã khách hàng (mã hóa đơn)"
+            value={billCode}
+            onChange={(e) => setBillCode(e.target.value)}
+            placeholder="PE0123456789"
+            required
+          />
+          <Input
+            label="Số tiền thanh toán (VND)"
+            value={billAmount}
+            onChange={(e) => setBillAmount(e.target.value)}
+            type="number"
+            placeholder="100000"
+            required
+          />
+          <Button type="submit" loading={billLoading}>Thanh toán</Button>
         </form>
       </Modal>
 
       <Modal isOpen={editProfileOpen} onClose={() => setEditProfileOpen(false)} title="Chỉnh sửa hồ sơ">
         <form onSubmit={handleEditProfile} className="space-y-6">
           <Input label="Họ và tên" value={editFullName} onChange={(e) => setEditFullName(e.target.value)} required />
-          <Input label="Ngày sinh (YYYY-MM-DD)" value={editDob} onChange={(e) => setEditDob(e.target.value)} placeholder="2000-01-15" />
-          <Button type="submit" title="Lưu thay đổi" loading={editSaving} />
+          <Input
+            label="Ngày sinh"
+            value={editDob}
+            onChange={(e) => setEditDob(e.target.value)}
+            placeholder="2000-01-15"
+            hint="Định dạng YYYY-MM-DD"
+          />
+          <Button type="submit" loading={editSaving}>Lưu thay đổi</Button>
         </form>
       </Modal>
 
@@ -447,14 +506,91 @@ export function FiatShell() {
         <form onSubmit={handleChangePassword} className="space-y-6">
           <Input label="Mật khẩu hiện tại" value={pwdCurrent} onChange={(e) => setPwdCurrent(e.target.value)} type="password" autoComplete="current-password" required />
           <Input label="Mật khẩu mới" value={pwdNew} onChange={(e) => setPwdNew(e.target.value)} type="password" autoComplete="new-password" required />
-          <Input label="Xác nhận mật khẩu mới" value={pwdConfirm} onChange={(e) => setPwdConfirm(e.target.value)} type="password" autoComplete="new-password" required />
-          <Button type="submit" title="Đổi mật khẩu" loading={pwdSaving} />
+          <Input
+            label="Xác nhận mật khẩu mới"
+            value={pwdConfirm}
+            onChange={(e) => setPwdConfirm(e.target.value)}
+            type="password"
+            autoComplete="new-password"
+            error={pwdConfirm && pwdNew !== pwdConfirm ? 'Mật khẩu xác nhận không khớp' : undefined}
+            required
+          />
+          <Button type="submit" loading={pwdSaving}>Đổi mật khẩu</Button>
         </form>
       </Modal>
     </WalletLayout>
   );
 }
 
-function fmtNumber(n: number) {
-  return n.toLocaleString('vi-VN');
+/* ===== Bộ phận nhỏ dùng nội bộ trong shell Fiat ===== */
+
+function Field({ label, value, accent }: { label: string; value?: string | null; accent?: boolean }) {
+  return (
+    <div className="rounded-2xl border border-[--color-border] bg-[--color-surface-2] p-4">
+      <p className="mb-1 text-xs font-medium tracking-wide text-[--color-muted-foreground] uppercase">{label}</p>
+      <p className={accent ? 'font-bold text-[--color-primary]' : 'font-bold text-white'}>{value}</p>
+    </div>
+  );
+}
+
+function QuickAction({
+  icon: Icon,
+  label,
+  onClick,
+  tone = 'primary',
+}: {
+  icon: typeof Plus;
+  label: string;
+  onClick: () => void;
+  tone?: 'primary' | 'amber';
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-full border border-[--color-border] bg-[--color-surface-2] p-2 pr-5 transition-colors hover:border-[--color-primary]/40 hover:bg-[--color-surface-3]"
+    >
+      <span
+        className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${
+          tone === 'amber'
+            ? 'bg-[--color-warning]/15 text-[--color-warning]'
+            : 'bg-[--color-primary-soft] text-[--color-primary]'
+        }`}
+      >
+        <Icon className="h-5 w-5" />
+      </span>
+      <span className="text-sm font-bold text-white">{label}</span>
+    </button>
+  );
+}
+
+function FiatTxRow({ tx }: { tx: TransactionResponse }) {
+  // TOPUP luôn là tiền vào; TRANSFER âm là tiền ra (backend ký theo hướng giao dịch).
+  const positive = tx.transactionType === 'TOPUP' || (tx.transactionType === 'TRANSFER' && Number(tx.amount) >= 0);
+
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-[--color-border] bg-black/20 p-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
+            positive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
+          }`}
+        >
+          {positive ? <ArrowDownLeft className="h-5 w-5" /> : <ArrowRightLeft className="h-5 w-5" />}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate font-bold text-white">{tx.description}</p>
+          <p className="text-xs text-slate-500">
+            {new Date(tx.createdAt).toLocaleString('vi-VN')} · {tx.referenceNumber}
+          </p>
+        </div>
+      </div>
+      <div className="ml-4 shrink-0 text-right">
+        <p className={`flex items-center justify-end gap-1 font-black ${positive ? 'text-emerald-400' : 'text-rose-400'}`}>
+          {positive ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+          {positive ? '+' : '-'}{fmtVnd(Math.abs(Number(tx.amount)))}
+        </p>
+        <p className="text-xs font-bold text-slate-500">{tx.transactionType}</p>
+      </div>
+    </div>
+  );
 }

@@ -1,14 +1,100 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+/* ==================== DESIGN TOKENS ====================
+   Ngôn ngữ thị giác kiểu Uniswap + Magic UI:
+   - Nền #131313, bề mặt #1b1b1b → #2e2e2e
+   - Accent hồng #fc72ff (crypto), mint #21c95e (fiat)
+   - Font display Syne + body Be Vietnam Pro (hỗ trợ tiếng Việt)
+   ======================================================== */
+@theme inline {
+  --font-sans: 'Be Vietnam Pro', system-ui, sans-serif;
+  --font-display: 'Syne', 'Be Vietnam Pro', system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-popover: var(--popover);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-accent-2: var(--accent-2);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
+  --radius-3xl: 2.5rem;
+
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-aurora: aurora 22s ease-in-out infinite alternate;
+  --animate-marquee: marquee 34s linear infinite;
+  --animate-border-beam: border-beam 6s linear infinite;
+  --animate-gradient-x: gradient-x 6s ease infinite;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-pulse-glow: pulse-glow 3.2s ease-in-out infinite;
+  --animate-spin-slow: spin 14s linear infinite;
+}
+
+:root {
+  --background: #131313;
+  --foreground: #ffffff;
+  --card: rgba(27, 27, 27, 0.88);
+  --card-foreground: #f5f5f5;
+  --surface-1: #1b1b1b;
+  --surface-2: #242424;
+  --surface-3: #2e2e2e;
+  --popover: #1b1b1b;
+  --muted: #242424;
+  --muted-foreground: #9b9b9b;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.1);
+  --destructive: #ff5f52;
+  --success: #21c95e;
+  --warning: #ffbf17;
+
+  --primary: #fc72ff;
+  --primary-foreground: #1a001f;
+  --primary-soft: rgba(252, 114, 255, 0.14);
+  --accent-2: #4c82fb;
+  --ring: #fc72ff;
+}
+
+[data-shell="fiat"] {
+  --primary: #21c95e;
+  --primary-foreground: #04160b;
+  --primary-soft: rgba(33, 201, 94, 0.14);
+  --accent-2: #86efac;
+  --ring: #4ade80;
+}
+
+[data-shell="crypto"] {
+  --primary: #fc72ff;
+  --primary-foreground: #1a001f;
+  --primary-soft: rgba(252, 114, 255, 0.14);
+  --accent-2: #4c82fb;
+  --ring: #fc72ff;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background-color: #020617; /* slate-950 */
-  color: #f8fafc; /* slate-50 */
+  background-color: var(--background);
+  color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -17,7 +103,11 @@ body {
   box-sizing: border-box;
 }
 
-/* Custom scrollbar */
+::selection {
+  background: rgba(252, 114, 255, 0.35);
+  color: #fff;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -26,9 +116,95 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 4px;
+  background: #2e2e2e;
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #3d3d3d;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* Gradient chữ kiểu Uniswap */
+.text-gradient-uni {
+  background: linear-gradient(90deg, #fc72ff 0%, #b478ff 45%, #4c82fb 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradient-x 8s ease infinite;
+}
+
+/* Glass surface dùng lại trên shell */
+.glass-panel {
+  background: linear-gradient(
+    180deg,
+    rgba(36, 36, 36, 0.72) 0%,
+    rgba(27, 27, 27, 0.88) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.noise-overlay::before {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes aurora {
+  0%   { transform: translate3d(-6%, -4%, 0) rotate(0deg) scale(1); }
+  50%  { transform: translate3d(6%, 5%, 0) rotate(9deg) scale(1.12); }
+  100% { transform: translate3d(-3%, 6%, 0) rotate(-6deg) scale(1.05); }
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes border-beam {
+  to { offset-distance: 100%; }
+}
+
+@keyframes gradient-x {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

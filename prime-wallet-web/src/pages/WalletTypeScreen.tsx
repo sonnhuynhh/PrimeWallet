@@ -1,148 +1,234 @@
-import { motion } from 'framer-motion';
-import { Wallet, Bitcoin, ShieldCheck, Globe, TrendingUp, Timer, LogOut, ShieldAlert } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { WebGLBackground } from '@/components/effects/WebGLBackground';
+import { BorderBeam } from '@/components/effects/BorderBeam';
+import { useAnimeReveal } from '@/components/effects/useAnimeReveal';
+import { Badge } from '@/components/ui/Badge';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { cn } from '@/lib/utils';
 
-/**
- * Màn hình chọn loại ví (sau đăng nhập).
- * Người dùng chọn 1 trong 2 ví → bộ tính năng + giao diện RIÊNG cho từng ví.
- * - Ví Fiat (VND): xanh ngọc emerald — tính năng ngân hàng truyền thống
- * - Ví Crypto (Web3): tím violet — tính năng blockchain
- */
+type Mode = 'fiat' | 'crypto';
+
+const OPTIONS: {
+  mode: Mode;
+  icon: string;
+  title: string;
+  suffix: string;
+  description: string;
+  points: { icon: string; label: string }[];
+  badge: string;
+}[] = [
+  {
+    mode: 'fiat',
+    icon: 'lucide:landmark',
+    title: 'Ví Fiat',
+    suffix: 'VND',
+    description:
+      'Tiền Việt Nam đồng. Tài khoản số, nạp tiền qua VNPAY, chuyển tiền và thanh toán hóa đơn.',
+    points: [
+      { icon: 'lucide:credit-card', label: 'Nạp tiền qua cổng VNPAY thật' },
+      { icon: 'lucide:arrow-left-right', label: 'Chuyển / nhận tiền VND tức thì' },
+      { icon: 'lucide:receipt', label: 'Thanh toán hóa đơn, lịch sử đầy đủ' },
+    ],
+    badge: 'Cổng thanh toán thật',
+  },
+  {
+    mode: 'crypto',
+    icon: 'cryptocurrency-color:eth',
+    title: 'Ví Crypto',
+    suffix: 'Web3',
+    description:
+      'Ví non-custodial trên 5 mạng. Swap, NFT, quản lý hạn mức — khoá riêng tư không rời trình duyệt.',
+    points: [
+      { icon: 'lucide:globe', label: 'Ethereum, BSC, Polygon, Base, Sepolia' },
+      { icon: 'lucide:repeat', label: 'Swap tự định tuyến qua Uniswap V3' },
+      { icon: 'lucide:key-round', label: 'Seed phrase chỉ tồn tại trong phiên' },
+    ],
+    badge: 'Non-custodial',
+  },
+];
+
 export function WalletTypeScreen() {
   const { session, signOut, setActiveWalletMode } = useAuth();
   const navigate = useNavigate();
-  const [switching, setSwitching] = useState<null | 'fiat' | 'crypto'>(null);
+  const [switching, setSwitching] = useState<Mode | null>(null);
+  const reveal = useAnimeReveal('[data-reveal]');
 
-  const choose = (mode: 'fiat' | 'crypto') => {
+  const choose = (mode: Mode) => {
     setSwitching(mode);
     setActiveWalletMode(mode);
-    // delay nhẹ để animation chọn xong rồi mới đổi trang
-    setTimeout(() => navigate(mode === 'fiat' ? '/fiat' : '/crypto'), 250);
+    setTimeout(() => navigate(mode === 'fiat' ? '/fiat' : '/crypto'), 220);
   };
 
-  return (
-    <div className="min-h-screen bg-slate-950 flex flex-col text-slate-200 relative overflow-hidden">
-      {/* Background glow */}
-      <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/10 blur-3xl rounded-full pointer-events-none" />
-      <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-violet-500/10 blur-3xl rounded-full pointer-events-none" />
+  const firstName = session?.profile.fullName.split(' ').slice(-1)[0] ?? '';
 
-      {/* Header */}
-      <header className="relative z-10 px-8 py-6 flex items-center justify-between max-w-6xl mx-auto w-full">
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-black text-white">
-            Prime<span className="text-emerald-500">Wallet</span>
-          </h1>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
+  return (
+    <div className="noise-overlay relative flex min-h-screen flex-col overflow-hidden bg-[--color-background] text-[--color-foreground]">
+      <WebGLBackground className="opacity-55" />
+
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-white">
+          Prime<span className="text-gradient-uni">Wallet</span>
+        </h1>
+
+        <div className="flex items-center gap-3">
+          <div className="hidden text-right sm:block">
             <p className="text-sm font-bold text-white">{session?.profile.fullName}</p>
-            <p className="text-xs text-slate-500">{session?.profile.email}</p>
+            <p className="text-xs text-[--color-muted-foreground]">{session?.profile.email}</p>
           </div>
-          {session?.auth?.role === 'ADMIN' && (
+
+          {session?.auth?.role === 'ADMIN' ? (
             <button
+              type="button"
               onClick={() => navigate('/admin')}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors"
-              title="Quản trị hệ thống"
+              className="inline-flex items-center gap-2 rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm font-bold text-rose-400 transition-colors hover:bg-rose-500/20"
             >
-              <ShieldAlert className="w-4 h-4" /> Quản trị
+              <AppIcon name="lucide:shield-alert" size={16} /> Quản trị
             </button>
-          )}
+          ) : null}
+
           <button
+            type="button"
             onClick={signOut}
-            className="p-2.5 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors"
+            className="rounded-full p-2.5 text-rose-400 transition-colors hover:bg-rose-500/10"
             title="Đăng xuất"
           >
-            <LogOut className="w-5 h-5" />
+            <AppIcon name="lucide:log-out" size={18} />
           </button>
         </div>
       </header>
 
-      {/* Hero */}
-      <main className="relative flex-1 flex flex-col items-center justify-center px-6 py-12 w-full">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-10"
-        >
-          <p className="text-sm uppercase tracking-[0.3em] text-slate-500 font-bold mb-3">
-            Chào mừng trở lại, {session?.profile.fullName.split(' ').slice(-1)[0]}
+      <main
+        ref={reveal}
+        className="relative z-10 flex w-full flex-1 flex-col items-center justify-center px-6 py-12"
+      >
+        <div className="mb-12 text-center">
+          <p
+            data-reveal
+            className="mb-3 text-xs font-bold uppercase tracking-[0.28em] text-[--color-muted-foreground]"
+            style={{ opacity: 0 }}
+          >
+            Chào mừng trở lại{firstName ? `, ${firstName}` : ''}
           </p>
-          <h2 className="text-4xl md:text-5xl font-black text-white leading-tight">
-            Chọn loại ví bạn muốn sử dụng
+          <h2
+            data-reveal
+            className="font-display text-4xl font-extrabold leading-tight tracking-tight text-white md:text-5xl"
+            style={{ opacity: 0 }}
+          >
+            Chọn loại ví bạn muốn dùng
           </h2>
-          <p className="mt-4 text-slate-400 max-w-xl mx-auto">
-            Mỗi loại ví có bộ tính năng và giao diện riêng biệt. Bạn có thể chuyển đổi bất kỳ lúc nào.
+          <p
+            data-reveal
+            className="mx-auto mt-4 max-w-xl text-[--color-muted-foreground]"
+            style={{ opacity: 0 }}
+          >
+            Mỗi loại ví có bộ tính năng và giao diện riêng. Bạn có thể chuyển đổi bất kỳ lúc nào.
           </p>
-        </motion.div>
-
-        <div className="grid md:grid-cols-2 gap-6 w-full max-w-3xl">
-          {/* Fiat Card */}
-          <motion.button
-            whileHover={{ y: -6, scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => choose('fiat')}
-            disabled={switching !== null}
-            className="group relative text-left p-8 rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-950/60 to-slate-900/80 hover:border-emerald-400/60 transition-all disabled:opacity-70"
-          >
-            <div className="absolute top-6 right-6 w-24 h-24 rounded-full bg-emerald-500/10 group-hover:bg-emerald-500/20 transition-colors blur-2xl" />
-            <div className="relative">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-6">
-                <Wallet className="w-7 h-7 text-emerald-400" />
-              </div>
-              <h3 className="text-2xl font-black text-white mb-2">Ví Fiat — VND</h3>
-              <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                Tiền Việt Nam đồng. Tài khoản ngân hàng số, nạp tiền, chuyển tiền, thanh toán hóa đơn.
-              </p>
-              <ul className="space-y-2.5 mb-8">
-                <li className="flex items-center gap-2 text-sm text-slate-300"><Timer className="w-4 h-4 text-emerald-400" /> Nạp tiền qua VNPAY</li>
-                <li className="flex items-center gap-2 text-sm text-slate-300"><TrendingUp className="w-4 h-4 text-emerald-400" /> Chuyển / nhận tiền VND</li>
-                <li className="flex items-center gap-2 text-sm text-slate-300"><ShieldCheck className="w-4 h-4 text-emerald-400" /> Thanh toán hóa đơn</li>
-              </ul>
-              <div className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm ${switching === 'fiat' ? 'bg-emerald-500 text-white' : 'bg-emerald-500/15 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white'} transition-colors`}>
-                {switching === 'fiat' ? 'Đang mở...' : 'Mở Ví Fiat →'}
-              </div>
-            </div>
-          </motion.button>
-
-          {/* Crypto Card */}
-          <motion.button
-            whileHover={{ y: -6, scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => choose('crypto')}
-            disabled={switching !== null}
-            className="group relative text-left p-8 rounded-3xl border border-violet-500/20 bg-gradient-to-br from-violet-950/60 to-slate-900/80 hover:border-violet-400/60 transition-all disabled:opacity-70"
-          >
-            <div className="absolute top-6 right-6 w-24 h-24 rounded-full bg-violet-500/10 group-hover:bg-violet-500/20 transition-colors blur-2xl" />
-            <div className="relative">
-              <div className="w-14 h-14 rounded-2xl bg-violet-500/20 border border-violet-500/40 flex items-center justify-center mb-6">
-                <Bitcoin className="w-7 h-7 text-violet-400" />
-              </div>
-              <h3 className="text-2xl font-black text-white mb-2">Ví Crypto — Web3</h3>
-              <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                Tiền mã hóa phi tập trung. ETH, BNB, Polygon, USDT, USDC — bạn nắm giữ chìa khóa của mình.
-              </p>
-              <ul className="space-y-2.5 mb-8">
-                <li className="flex items-center gap-2 text-sm text-slate-300"><Globe className="w-4 h-4 text-violet-400" /> Đa mạng: ETH, BSC, Polygon</li>
-                <li className="flex items-center gap-2 text-sm text-slate-300"><Bitcoin className="w-4 h-4 text-violet-400" /> Gửi / nhận coin & token</li>
-                <li className="flex items-center gap-2 text-sm text-slate-300"><ShieldCheck className="w-4 h-4 text-violet-400" /> Chỉ bạn giữ private key</li>
-              </ul>
-              <div className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm ${switching === 'crypto' ? 'bg-violet-500 text-white' : 'bg-violet-500/15 text-violet-400 group-hover:bg-violet-500 group-hover:text-white'} transition-colors`}>
-                {switching === 'crypto' ? 'Đang mở...' : 'Mở Ví Crypto →'}
-              </div>
-            </div>
-          </motion.button>
         </div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="mt-10 text-xs text-slate-600 flex items-center gap-1.5"
+        <div className="grid w-full max-w-4xl gap-5 md:grid-cols-2">
+          {OPTIONS.map((opt) => {
+            const active = switching === opt.mode;
+            const isCrypto = opt.mode === 'crypto';
+
+            return (
+              <button
+                key={opt.mode}
+                type="button"
+                data-reveal
+                onClick={() => choose(opt.mode)}
+                disabled={switching !== null}
+                style={{ opacity: 0 }}
+                className={cn(
+                  'group relative w-full overflow-hidden rounded-[2rem] border p-8 text-left transition-all',
+                  'bg-[--color-card] backdrop-blur-xl disabled:opacity-70',
+                  isCrypto
+                    ? 'border-[--color-primary]/25 hover:border-[--color-primary]/55'
+                    : 'border-emerald-500/25 hover:border-emerald-400/55',
+                )}
+              >
+                <BorderBeam duration={isCrypto ? 8 : 10} size={90} />
+                <div
+                  className={cn(
+                    'pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full blur-3xl transition-opacity',
+                    isCrypto ? 'bg-[--color-primary]/20' : 'bg-emerald-500/20',
+                    'opacity-70 group-hover:opacity-100',
+                  )}
+                />
+
+                <div className="relative">
+                  <div className="mb-6 flex items-start justify-between">
+                    <span
+                      className={cn(
+                        'grid h-14 w-14 place-items-center rounded-2xl border',
+                        isCrypto
+                          ? 'border-[--color-primary]/40 bg-[--color-primary-soft] text-[--color-primary]'
+                          : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400',
+                      )}
+                    >
+                      <AppIcon name={opt.icon} size={28} />
+                    </span>
+                    <Badge variant={isCrypto ? 'primary' : 'success'} dot>
+                      {opt.badge}
+                    </Badge>
+                  </div>
+
+                  <h3 className="mb-2 font-display text-2xl font-extrabold text-white">
+                    {opt.title} —{' '}
+                    <span className={isCrypto ? 'text-[--color-primary]' : 'text-emerald-400'}>
+                      {opt.suffix}
+                    </span>
+                  </h3>
+                  <p className="mb-6 text-sm leading-relaxed text-[--color-muted-foreground]">
+                    {opt.description}
+                  </p>
+
+                  <ul className="mb-8 space-y-2.5">
+                    {opt.points.map((p) => (
+                      <li
+                        key={p.label}
+                        className="flex items-center gap-2.5 text-sm text-white/85"
+                      >
+                        <AppIcon
+                          name={p.icon}
+                          size={16}
+                          className={isCrypto ? 'text-[--color-primary]' : 'text-emerald-400'}
+                        />
+                        {p.label}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold transition-colors',
+                      active
+                        ? isCrypto
+                          ? 'bg-[--color-primary] text-[--color-primary-foreground]'
+                          : 'bg-emerald-500 text-[#04160b]'
+                        : isCrypto
+                          ? 'bg-[--color-primary-soft] text-[--color-primary] group-hover:bg-[--color-primary] group-hover:text-[--color-primary-foreground]'
+                          : 'bg-emerald-500/15 text-emerald-300 group-hover:bg-emerald-500 group-hover:text-[#04160b]',
+                    )}
+                  >
+                    {active ? 'Đang mở...' : `Mở ${opt.title}`}
+                    <AppIcon name="lucide:arrow-right" size={16} />
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <p
+          data-reveal
+          className="mt-12 flex items-center gap-1.5 text-xs text-[--color-muted-foreground]"
+          style={{ opacity: 0 }}
         >
-          <ShieldCheck className="w-3.5 h-3.5" /> PrimeWallet bảo vệ cả hai ví bằng xác thực JWT
-        </motion.p>
+          <AppIcon name="lucide:shield-check" size={14} />
+          JWT bảo vệ phiên · khoá ví crypto không bao giờ rời trình duyệt
+        </p>
       </main>
     </div>
   );

@@ -10,9 +10,12 @@ export interface PaymentResponse {
   txnRef: string;
 }
 
-/**
- * Creates a VNPAY payment URL.
- */
+export interface PaymentConfirmResult {
+  credited: boolean;
+  alreadyProcessed: boolean;
+  message: string;
+}
+
 export async function createPaymentUrl(amount: number, description: string): Promise<PaymentResponse> {
   return request<PaymentResponse>("/api/payment/vnpay/create", {
     method: "POST",
@@ -20,6 +23,7 @@ export async function createPaymentUrl(amount: number, description: string): Pro
   });
 }
 
-export async function processVnPayReturn(query: string) {
-  return request(`/api/payment/vnpay/return${query}`);
+/** Xác nhận thanh toán VNPAY sau redirect — cộng tiền vào ví (idempotent). */
+export async function confirmVnPayPayment(query: string): Promise<PaymentConfirmResult> {
+  return request<PaymentConfirmResult>(`/api/payment/vnpay/confirm${query}`);
 }

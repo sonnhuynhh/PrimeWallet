@@ -1,21 +1,24 @@
 package com.sonnhuynhh.primewallet.wallet.enums;
 
+import java.util.Map;
+
 /**
  * Danh sách các mạng blockchain được hỗ trợ bởi PrimeWallet Crypto.
  *
- * Mỗi mạng gồm:
- * - id: định danh (lưu trong DB)
- * - displayName: tên hiển thị cho UI
- * - nativeSymbol: đơn vị token gốc (ETH, BNB, MATIC)
- * - chainId: Chain ID theo chuẩn EIP-155
- * - isTestnet: cờ đánh dấu mạng test
+ * Chỉ Sepolia là testnet; BSC / Polygon / Base dùng mainnet.
  */
 public enum BlockchainNetwork {
     ETHEREUM_MAINNET("eth_mainnet", "Ethereum Mainnet", "ETH", 1L, false),
     ETH_SEPOLIA("eth_sepolia", "Ethereum Sepolia", "ETH", 11155111L, true),
-    BSC_TESTNET("bsc_testnet", "BNB Smart Chain Testnet", "BNB", 97L, true),
-    POLYGON_AMOY("polygon_amoy", "Polygon Amoy", "POL", 80002L, true),
-    BASE_SEPOLIA("base_sepolia", "Base Sepolia", "ETH", 84532L, true);
+    BSC_MAINNET("bsc_mainnet", "BNB Smart Chain", "BNB", 56L, false),
+    POLYGON_MAINNET("polygon_mainnet", "Polygon", "POL", 137L, false),
+    BASE_MAINNET("base_mainnet", "Base", "ETH", 8453L, false);
+
+    private static final Map<String, BlockchainNetwork> LEGACY_ALIASES = Map.of(
+            "bsc_testnet", BSC_MAINNET,
+            "polygon_amoy", POLYGON_MAINNET,
+            "base_sepolia", BASE_MAINNET
+    );
 
     private final String id;
     private final String label;
@@ -37,7 +40,6 @@ public enum BlockchainNetwork {
     public Long getChainId() { return chainId; }
     public boolean isTestnet() { return testnet; }
 
-    /** Tìm mạng theo id, ném lỗi rõ ràng nếu không hỗ trợ. */
     public static BlockchainNetwork fromId(String id) {
         for (BlockchainNetwork n : values()) {
             if (n.id.equalsIgnoreCase(id)) {
@@ -49,10 +51,17 @@ public enum BlockchainNetwork {
                 .map(BlockchainNetwork::getId).toList());
     }
 
-    /** Cho phép alias cũ "ETH_SEPOLIA" để tương thích dữ liệu đã lưu. */
+    /** Alias cũ (testnet BSC/Polygon/Base + ETH_SEPOLIA viết hoa). */
     public static BlockchainNetwork fromIdWithLegacy(String id) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Mạng blockchain không được để trống");
+        }
         if ("ETH_SEPOLIA".equalsIgnoreCase(id) || "ETHEREUM_SEPOLIA".equalsIgnoreCase(id)) {
             return ETH_SEPOLIA;
+        }
+        BlockchainNetwork legacy = LEGACY_ALIASES.get(id.toLowerCase());
+        if (legacy != null) {
+            return legacy;
         }
         return fromId(id);
     }

@@ -3,6 +3,7 @@ package com.sonnhuynhh.primewallet.payment.controller;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
 import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
+import com.sonnhuynhh.primewallet.payment.dto.PaymentConfirmResult;
 import com.sonnhuynhh.primewallet.payment.dto.PaymentRequest;
 import com.sonnhuynhh.primewallet.payment.dto.PaymentResponse;
 import com.sonnhuynhh.primewallet.payment.service.PaymentService;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/payment/vnpay")
@@ -63,6 +65,21 @@ public class PaymentController {
             return xForwardedFor.split(",")[0].trim();
         }
         return request.getRemoteAddr();
+    }
+
+    /**
+     * Xác nhận thanh toán từ Return URL (frontend gọi sau khi VNPAY redirect về /vnpay-return).
+     * Bổ sung cho IPN khi chạy local — VNPAY không gọi được webhook tới localhost.
+     */
+    @GetMapping("/confirm")
+    public ResponseEntity<ApiResponse<PaymentConfirmResult>> confirmPayment(
+            @RequestParam Map<String, String> params,
+            Authentication authentication) {
+        String email = authentication.getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException("User not found"));
+        PaymentConfirmResult result = paymentService.confirmFromReturn(params, user.getId());
+        return ResponseEntity.ok(ApiResponse.success(result.getMessage(), result));
     }
 
     /**

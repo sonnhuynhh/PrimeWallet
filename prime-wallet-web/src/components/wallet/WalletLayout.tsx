@@ -1,8 +1,9 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { ArrowLeft, LogOut, ShieldAlert, UserCircle } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { WebGLBackground } from '@/components/effects/WebGLBackground';
+import { cn } from '@/lib/utils';
 
 interface WalletLayoutProps {
   accent: 'emerald' | 'violet';
@@ -12,84 +13,98 @@ interface WalletLayoutProps {
 }
 
 /**
- * Khung chung cho 2 shell Fiat / Crypto:
- * - Thanh trên hiển thị brand + nút chuyển đổi loại ví (về WalletTypeScreen)
- * - Nút user / logout
- * Nội dung chính nằm trong {children}.
+ * Chrome app kiểu Uniswap: top bar glass, brand + accent shell,
+ * nền WebGL rất nhẹ phía sau nội dung.
  */
 export function WalletLayout({ accent, title, subtitle, children }: WalletLayoutProps) {
   const { session, signOut } = useAuth();
   const navigate = useNavigate();
-
-  const accentText = accent === 'emerald' ? 'text-emerald-400' : 'text-violet-400';
-  const accentBg = accent === 'emerald'
-    ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-    : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30';
+  const isFiat = accent === 'emerald';
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-200">
-      {/* Top bar */}
-      <header className="fixed top-0 inset-x-0 z-30 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800">
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+    <div
+      data-shell={isFiat ? 'fiat' : 'crypto'}
+      className="noise-overlay relative min-h-screen bg-[--color-background] text-[--color-foreground]"
+    >
+      <WebGLBackground className="fixed inset-0 opacity-35" />
+      <div
+        aria-hidden
+        className={cn(
+          'pointer-events-none fixed inset-x-0 top-0 h-72',
+          isFiat
+            ? 'bg-[radial-gradient(ellipse_at_top,rgba(33,201,94,0.14),transparent_60%)]'
+            : 'bg-[radial-gradient(ellipse_at_top,rgba(252,114,255,0.16),transparent_60%)]',
+        )}
+      />
+
+      <header className="sticky top-0 z-30 border-b border-[--color-border] bg-[#131313]/72 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-2 px-4 sm:h-16 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <button
+              type="button"
               onClick={() => navigate('/wallet-type')}
-              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold border transition-colors ${accentBg}`}
+              className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[--color-border] bg-white/[0.03] px-2.5 py-2 text-sm font-semibold text-white transition-colors hover:border-[--color-primary]/45 hover:bg-[--color-primary-soft] sm:px-3"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Chuyển ví</span>
+              <AppIcon name="lucide:arrow-left-right" size={15} className="text-[--color-primary]" />
+              <span className="hidden sm:inline">Chuyển ví</span>
             </button>
-            <div>
-              <h1 className="text-lg font-black text-white leading-tight">
-                Prime<span className={accentText}>Wallet</span>
-              </h1>
-              <p className={`text-[11px] uppercase tracking-widest font-bold ${accentText}`}>{title}</p>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate font-display text-sm font-extrabold tracking-tight text-white sm:text-base">
+                Prime<span className="text-[--color-primary]">Wallet</span>
+              </p>
+              <p className="truncate text-[10px] font-bold uppercase tracking-[0.18em] text-[--color-primary]">
+                {title}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-full ${accent === 'emerald' ? 'bg-emerald-500/20' : 'bg-violet-500/20'} flex items-center justify-center`}>
-                <UserCircle className={`w-5 h-5 ${accentText}`} />
-              </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="hidden items-center gap-2.5 md:flex">
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-[--color-primary-soft] text-[--color-primary]">
+                <AppIcon name="lucide:user-round" size={18} />
+              </span>
               <div className="leading-tight">
-                <p className="text-sm font-bold text-white">{session?.profile.fullName}</p>
-                <p className="text-[11px] text-slate-500">{session?.profile.email}</p>
+                <p className="text-sm font-semibold text-white">{session?.profile.fullName}</p>
+                <p className="text-[11px] text-[--color-muted-foreground]">
+                  {session?.profile.email}
+                </p>
               </div>
             </div>
-            {session?.auth?.role === 'ADMIN' && (
+
+            {session?.auth?.role === 'ADMIN' ? (
               <button
+                type="button"
                 onClick={() => navigate('/admin')}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20"
                 title="Quản trị hệ thống"
               >
-                <ShieldAlert className="w-4 h-4" /> Quản trị
+                <AppIcon name="lucide:shield-alert" size={15} />
+                <span className="hidden sm:inline">Quản trị</span>
               </button>
-            )}
+            ) : null}
+
             <button
+              type="button"
               onClick={signOut}
-              className="p-2.5 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors"
+              className="grid h-10 w-10 place-items-center rounded-full text-red-400 transition-colors hover:bg-red-500/10"
               title="Đăng xuất"
             >
-              <LogOut className="w-5 h-5" />
+              <AppIcon name="lucide:log-out" size={18} />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Content */}
-      <main className="pt-16 flex-1 w-full">
-        <div className="max-w-5xl mx-auto px-6 py-8">
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-8"
-          >
-            <h2 className="text-3xl font-black text-white">{title}</h2>
-            <p className="mt-1 text-slate-400">{subtitle}</p>
-          </motion.div>
-          {children}
+      <main className="relative mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-5 sm:mb-7">
+          <h2 className="font-display text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
+            {title}
+          </h2>
+          <p className="mt-1.5 max-w-2xl text-sm text-[--color-muted-foreground]">
+            {subtitle}
+          </p>
         </div>
+        {children}
       </main>
     </div>
   );

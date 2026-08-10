@@ -1,6 +1,7 @@
 package com.sonnhuynhh.primewallet.payment.service;
 
 import com.sonnhuynhh.primewallet.common.exception.KycRequiredException;
+import com.sonnhuynhh.primewallet.payment.dto.PaymentConfirmResult;
 import com.sonnhuynhh.primewallet.payment.config.VnpayConfig;
 import com.sonnhuynhh.primewallet.payment.entity.PaymentOrder;
 import com.sonnhuynhh.primewallet.payment.enums.PaymentOrderStatus;
@@ -224,6 +225,34 @@ class PaymentServiceTest {
         String message = paymentService.handleReturnDisplay(params);
 
         assertThat(message).contains("Chữ ký không hợp lệ");
+        verify(transactionService, never()).topUp(any(), any());
+    }
+
+    @Test
+    @DisplayName("Confirm return: thành công → cộng tiền vào ví (fallback khi IPN không tới localhost)")
+    void confirmFromReturn_success_creditsWallet() {
+        PaymentOrder order = pendingOrder(new BigDecimal("100000"));
+        when(paymentOrderRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(order));
+        Map<String, String> params = signedParams("00", "10000000");
+
+        PaymentConfirmResult result = paymentService.confirmFromReturn(params, ORDER_USER);
+
+        assertThat(result.isCredited()).isTrue();
+        verify(transactionService).topUp(any(), eq(ORDER_USER));
+        assertThat(order.getStatus()).isEqualTo(PaymentOrderStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("Confirm return: user khác → không cộng tiền")
+    void confirmFromReturn_wrongUser_forbidden() {
+        PaymentOrder order = pendingOrder(new BigDecimal("100000"));
+        when(paymentOrderRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(order));
+        Map<String, String> params = signedParams("00", "10000000");
+
+        PaymentConfirmResult result = paymentService.confirmFromReturn(
+                params, UUID.fromString("33333333-3333-3333-3333-333333333333"));
+
+        assertThat(result.isCredited()).isFalse();
         verify(transactionService, never()).topUp(any(), any());
     }
 }

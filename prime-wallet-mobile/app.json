@@ -10,15 +10,27 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sonnhuynhh.primewallet"
     },
     "android": {
+      "package": "com.sonnhuynhh.primewallet",
       "adaptiveIcon": {
         "backgroundColor": "#08111f"
       }
     },
     "web": {
       "bundler": "metro"
-    }
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ceaca125-ba99-4093-ab50-fc60d69de2fc"
+      }
+    },
+    "owner": "guguhys-team"
   }
 }

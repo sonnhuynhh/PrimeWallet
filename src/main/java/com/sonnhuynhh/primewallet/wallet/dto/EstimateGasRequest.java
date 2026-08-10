@@ -1,5 +1,7 @@
 package com.sonnhuynhh.primewallet.wallet.dto;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import lombok.Data;
@@ -27,4 +29,12 @@ public class EstimateGasRequest {
     /** Contract ERC-20 (bỏ trống = native coin). */
     @Pattern(regexp = "^$|^0x[a-fA-F0-9]{40}$", message = "Contract address không hợp lệ")
     private String tokenAddress;
+
+    /**
+     * Số thập phân của token ERC-20 (USDT/USDC = 6, DAI = 18...). Chỉ dùng khi có
+     * {@code tokenAddress}; bỏ trống thì mặc định 18 như phần lớn ERC-20.
+     */
+    @Min(value = 0, message = "Token decimals không hợp lệ")
+    @Max(value = 36, message = "Token decimals không hợp lệ")
+    private Integer tokenDecimals;
 }

@@ -26,6 +26,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -61,22 +62,26 @@ public class CryptoWalletService {
         BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(request.getBlockchainNetwork());
         String networkId = network.getId();
 
-        // Địa chỉ unique trên TOÀN hệ thống (entity: wallet_address unique=true).
-        // Nếu user link lại cùng address + cùng mạng → idempotent trả ví cũ.
-        // Nếu address thuộc người khác (hoặc cùng user/hệ mạng khác) → chặn.
-        List<CryptoWallet> conflicts = cryptoWalletRepository.findByWalletAddress(request.getWalletAddress());
-        if (!conflicts.isEmpty()) {
-            CryptoWallet existing = conflicts.get(0);
-            if (existing.getUser().getId().equals(userId)
-                    && existing.getBlockchainNetwork().equals(networkId)) {
+        // Một địa chỉ dùng được trên mọi mạng EVM, nên khoá chống trùng là cặp
+        // (địa chỉ, mạng) chứ không phải riêng địa chỉ:
+        // - cùng user, cùng mạng  → idempotent, trả lại ví cũ
+        // - user khác, cùng mạng  → chặn (không cho chiếm địa chỉ người khác)
+        // - cùng user, mạng khác  → cho phép, đây chính là luồng đổi mạng
+        Optional<CryptoWallet> sameAddressOnNetwork =
+                cryptoWalletRepository.findByWalletAddressAndBlockchainNetwork(
+                        request.getWalletAddress(), networkId);
+        if (sameAddressOnNetwork.isPresent()) {
+            CryptoWallet existing = sameAddressOnNetwork.get();
+            if (existing.getUser().getId().equals(userId)) {
                 return toCryptoWalletResponse(existing);
             }
             throw new IllegalArgumentException(
-                    "Địa chỉ ví này đã được liên kết với tài khoản khác");
+                    "Địa chỉ ví này đã được liên kết với tài khoản khác trên mạng " + network.getLabel());
         }
 
-        // Kiểm tra user đã có ví trên mạng này chưa → cái đầu tiên là PRIMARY
-        boolean isPrimary = cryptoWalletRepository.findByUserIdAndBlockchainNetwork(userId, networkId).isEmpty();
+        // Ví đầu tiên của user trên mạng này là PRIMARY.
+        boolean isPrimary = cryptoWalletRepository
+                .findByUserIdAndBlockchainNetwork(userId, networkId).isEmpty();
 
         CryptoWallet wallet = CryptoWallet.builder()
                 .user(user)
@@ -188,11 +193,16 @@ public class CryptoWalletService {
     }
 
     /**
-     * Tìm ví của user theo địa chỉ (dùng khi gửi giao dịch để lưu lịch sử).
+     * Tìm ví của user theo địa chỉ + mạng (dùng khi gửi giao dịch để lưu lịch sử).
+     *
+     * <p>Phải kèm mạng: từ khi một địa chỉ được phép liên kết trên nhiều mạng,
+     * tra theo mỗi địa chỉ có thể khớp nhiều dòng và ném NonUniqueResultException.
      */
-    public CryptoWallet findByOwnerAndAddress(UUID userId, String walletAddress) {
-        return cryptoWalletRepository.findByWalletAddressAndUser_Id(walletAddress, userId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy ví với địa chỉ " + walletAddress));
+    public CryptoWallet findByOwnerAndAddress(UUID userId, String walletAddress, String blockchainNetwork) {
+        return cryptoWalletRepository
+                .findByWalletAddressAndBlockchainNetworkAndUser_Id(walletAddress, blockchainNetwork, userId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Không tìm thấy ví " + walletAddress + " trên mạng " + blockchainNetwork));
     }
 
     // ==================== HELPERS ====================

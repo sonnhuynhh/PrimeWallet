@@ -1,6 +1,7 @@
 package com.sonnhuynhh.primewallet.payment.service;
 
 import com.sonnhuynhh.primewallet.payment.config.VnpayConfig;
+import com.sonnhuynhh.primewallet.payment.dto.PaymentConfirmResult;
 import com.sonnhuynhh.primewallet.payment.dto.PaymentRequest;
 import com.sonnhuynhh.primewallet.payment.dto.PaymentResponse;
 import com.sonnhuynhh.primewallet.payment.entity.PaymentOrder;
@@ -154,91 +155,181 @@ public class PaymentService {
         try {
             log.info("Nhận IPN từ VNPAY: {}", params);
 
-            // Verify signature
             if (!isValidSignature(params)) {
                 log.error("Sai chữ ký IPN từ VNPAY!");
-                // Theo tài liệu VNPAY: 97 = Checksum failed
                 return ipnResponse("97", "Checksum failed");
             }
 
-            String vnp_ResponseCode = params.get("vnp_ResponseCode");
-            String vnp_TxnRef = params.get("vnp_TxnRef");
-            String vnp_AmountStr = params.get("vnp_Amount");
-
-            // Tra cứu đơn thanh toán gốc theo TxnRef (Fix #16)
-            if (vnp_TxnRef == null) {
-                log.error("IPN thiếu vnp_TxnRef");
-                return ipnResponse("01", "Order not found");
-            }
-            Optional<PaymentOrder> orderOpt = paymentOrderRepository.findByTxnRef(vnp_TxnRef);
-            if (orderOpt.isEmpty()) {
-                log.error("Không tìm thấy đơn thanh toán với TxnRef: {}", vnp_TxnRef);
-                // Theo tài liệu VNPAY: 01 = Order not found
-                return ipnResponse("01", "Order not found");
-            }
-            PaymentOrder order = orderOpt.get();
-
-            // Idempotency: nếu đơn đã xử lý xong (SUCCESS) → trả 02 (đã xác nhận)
-            if (order.getStatus() == PaymentOrderStatus.SUCCESS) {
-                log.info("Đơn {} đã được xử lý thành công trước đó (idempotent).", vnp_TxnRef);
-                return ipnResponse("02", "Order already confirmed");
-            }
-
-            // ĐỐI CHIẾU SỐ TIỀN: callback (đơn vị xu) phải khớp số tiền kỳ vọng * 100 (Fix #16)
-            BigDecimal expectedVnpAmount = order.getAmount().multiply(VNP_AMOUNT_MULTIPLIER);
-            BigDecimal actualVnpAmount;
-            try {
-                actualVnpAmount = new BigDecimal(vnp_AmountStr);
-            } catch (Exception e) {
-                log.error("vnp_Amount không hợp lệ: {}", vnp_AmountStr);
-                return ipnResponse("04", "Invalid amount");
-            }
-            if (expectedVnpAmount.compareTo(actualVnpAmount) != 0) {
-                log.error("Số tiền IPN không khớp. Kỳ vọng: {}, nhận: {}", expectedVnpAmount, actualVnpAmount);
-                markFailed(order, vnp_ResponseCode,
-                        "Số tiền không khớp: kỳ vọng " + expectedVnpAmount + ", nhận " + actualVnpAmount);
-                // Theo tài liệu VNPAY: 04 = Invalid amount
-                return ipnResponse("04", "Invalid amount");
-            }
-
-            // Nếu VNPAY báo giao dịch KHÔNG thành công → đánh dấu CANCELLED
-            if (!"00".equals(vnp_ResponseCode)) {
-                log.info("Giao dịch IPN bị hủy hoặc thất bại. Mã: {}", vnp_ResponseCode);
-                order.setStatus(PaymentOrderStatus.CANCELLED);
-                order.setVnpResponseCode(vnp_ResponseCode);
-                paymentOrderRepository.save(order);
-                return ipnResponse("00", "Confirm Success");
-            }
-
-            // Giao dịch thành công → nạp tiền vào ví. userId lấy TỪ ĐƠN (nguồn tin cậy).
-            TopUpRequest topUpRequest = new TopUpRequest();
-            topUpRequest.setAmount(order.getAmount());
-            topUpRequest.setIdempotencyKey(UUID.fromString(vnp_TxnRef)); // TxnRef là UUID
-            topUpRequest.setDescription("Nạp tiền từ VNPAY - TxnRef: " + vnp_TxnRef);
-
-            try {
-                transactionService.topUp(topUpRequest, order.getUserId());
-                order.setStatus(PaymentOrderStatus.SUCCESS);
-                order.setVnpResponseCode(vnp_ResponseCode);
-                paymentOrderRepository.save(order);
-                log.info("Đã nạp thành công {} VNĐ cho user {} từ IPN", order.getAmount(), order.getUserId());
-                // Theo tài liệu VNPAY: 00 = Confirm Success
-                return ipnResponse("00", "Confirm Success");
-            } catch (com.sonnhuynhh.primewallet.common.exception.AccountLockedException
-                     | com.sonnhuynhh.primewallet.common.exception.KycRequiredException e) {
-                // Fix #3: VNPAY ĐÃ thu tiền nhưng ta KHÔNG nạp được vào ví.
-                // KHÔNG được âm thầm nuốt lỗi — phải LƯU FAILED để Admin đối soát/hoàn tiền.
-                log.error("Lỗi nghiệp vụ khi IPN nạp tiền (cần đối soát tay): {}", e.getMessage());
-                markFailed(order, vnp_ResponseCode, "Nạp ví thất bại: " + e.getMessage());
-                // Trả 00 để VNPAY không gọi lại (lỗi nghiệp vụ, gọi lại cũng vô ích);
-                // đơn đã ở trạng thái FAILED để con người xử lý.
-                return ipnResponse("00", "Confirm Success");
-            }
+            SettlementResult result = settlePaymentOrder(params, null);
+            return switch (result) {
+                case SettlementResult.AlreadyDone ignored -> ipnResponse("02", "Order already confirmed");
+                case SettlementResult.OrderNotFound ignored -> ipnResponse("01", "Order not found");
+                case SettlementResult.InvalidAmount ignored -> ipnResponse("04", "Invalid amount");
+                case SettlementResult.Cancelled ignored -> ipnResponse("00", "Confirm Success");
+                case SettlementResult.Credited ignored -> ipnResponse("00", "Confirm Success");
+                case SettlementResult.BusinessError ignored -> ipnResponse("00", "Confirm Success");
+                case SettlementResult.Forbidden ignored -> ipnResponse("01", "Order not found");
+            };
         } catch (Exception e) {
             log.error("Lỗi không xác định khi xử lý IPN VNPAY", e);
-            // Trả 99 để VNPAY thử gọi lại sau (có thể lỗi tạm thời: DB timeout, ...)
             return ipnResponse("99", "Unknown error");
         }
+    }
+
+    /**
+     * Xác nhận thanh toán từ Return URL (frontend gọi sau khi VNPAY redirect).
+     *
+     * Dùng khi chạy local: VNPAY không gọi được IPN tới localhost. Vẫn an toàn vì:
+     * - Chữ ký HMAC phải hợp lệ (do VNPAY ký)
+     * - JWT xác thực user
+     * - userId phải khớp đơn thanh toán
+     * - Idempotent qua PaymentOrder (không cộng trùng)
+     */
+    @Transactional
+    public PaymentConfirmResult confirmFromReturn(Map<String, String> params, UUID callerUserId) {
+        if (!isValidSignature(params)) {
+            log.warn("Confirm return: chữ ký không hợp lệ");
+            return PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Chữ ký không hợp lệ. Vui lòng liên hệ hỗ trợ nếu đã bị trừ tiền.")
+                    .build();
+        }
+
+        String vnp_ResponseCode = params.get("vnp_ResponseCode");
+        if (!"00".equals(vnp_ResponseCode)) {
+            return PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Giao dịch thất bại hoặc đã bị hủy.")
+                    .build();
+        }
+
+        SettlementResult result = settlePaymentOrder(params, callerUserId);
+        return switch (result) {
+            case SettlementResult.Credited c -> PaymentConfirmResult.builder()
+                    .credited(true)
+                    .alreadyProcessed(false)
+                    .message("Nạp thành công " + c.amount() + " VNĐ vào ví.")
+                    .build();
+            case SettlementResult.AlreadyDone ignored -> PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(true)
+                    .message("Giao dịch đã được xử lý trước đó.")
+                    .build();
+            case SettlementResult.OrderNotFound ignored -> PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Không tìm thấy đơn thanh toán.")
+                    .build();
+            case SettlementResult.Forbidden ignored -> PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Bạn không có quyền xác nhận giao dịch này.")
+                    .build();
+            case SettlementResult.InvalidAmount ignored -> PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Số tiền không khớp với đơn thanh toán.")
+                    .build();
+            case SettlementResult.Cancelled ignored -> PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Giao dịch đã bị hủy.")
+                    .build();
+            case SettlementResult.BusinessError e -> PaymentConfirmResult.builder()
+                    .credited(false)
+                    .alreadyProcessed(false)
+                    .message("Không nạp được vào ví: " + e.reason() + ". Vui lòng liên hệ hỗ trợ.")
+                    .build();
+        };
+    }
+
+    /**
+     * Logic cộng tiền dùng chung cho IPN và confirm return.
+     *
+     * @param callerUserId null khi gọi từ IPN (server-to-server); bắt buộc khớp đơn khi gọi từ frontend.
+     */
+    private SettlementResult settlePaymentOrder(Map<String, String> params, UUID callerUserId) {
+        String vnp_ResponseCode = params.get("vnp_ResponseCode");
+        String vnp_TxnRef = params.get("vnp_TxnRef");
+        String vnp_AmountStr = params.get("vnp_Amount");
+
+        if (vnp_TxnRef == null) {
+            log.error("Thiếu vnp_TxnRef");
+            return new SettlementResult.OrderNotFound();
+        }
+
+        Optional<PaymentOrder> orderOpt = paymentOrderRepository.findByTxnRef(vnp_TxnRef);
+        if (orderOpt.isEmpty()) {
+            log.error("Không tìm thấy đơn thanh toán với TxnRef: {}", vnp_TxnRef);
+            return new SettlementResult.OrderNotFound();
+        }
+        PaymentOrder order = orderOpt.get();
+
+        if (callerUserId != null && !order.getUserId().equals(callerUserId)) {
+            log.warn("User {} cố xác nhận đơn của user {}", callerUserId, order.getUserId());
+            return new SettlementResult.Forbidden();
+        }
+
+        if (order.getStatus() == PaymentOrderStatus.SUCCESS) {
+            log.info("Đơn {} đã được xử lý thành công trước đó (idempotent).", vnp_TxnRef);
+            return new SettlementResult.AlreadyDone();
+        }
+
+        BigDecimal expectedVnpAmount = order.getAmount().multiply(VNP_AMOUNT_MULTIPLIER);
+        BigDecimal actualVnpAmount;
+        try {
+            actualVnpAmount = new BigDecimal(vnp_AmountStr);
+        } catch (Exception e) {
+            log.error("vnp_Amount không hợp lệ: {}", vnp_AmountStr);
+            return new SettlementResult.InvalidAmount();
+        }
+        if (expectedVnpAmount.compareTo(actualVnpAmount) != 0) {
+            log.error("Số tiền callback không khớp. Kỳ vọng: {}, nhận: {}", expectedVnpAmount, actualVnpAmount);
+            markFailed(order, vnp_ResponseCode,
+                    "Số tiền không khớp: kỳ vọng " + expectedVnpAmount + ", nhận " + actualVnpAmount);
+            return new SettlementResult.InvalidAmount();
+        }
+
+        if (!"00".equals(vnp_ResponseCode)) {
+            log.info("Giao dịch bị hủy hoặc thất bại. Mã: {}", vnp_ResponseCode);
+            order.setStatus(PaymentOrderStatus.CANCELLED);
+            order.setVnpResponseCode(vnp_ResponseCode);
+            paymentOrderRepository.save(order);
+            return new SettlementResult.Cancelled();
+        }
+
+        TopUpRequest topUpRequest = new TopUpRequest();
+        topUpRequest.setAmount(order.getAmount());
+        topUpRequest.setIdempotencyKey(UUID.fromString(vnp_TxnRef));
+        topUpRequest.setDescription("Nạp tiền từ VNPAY - TxnRef: " + vnp_TxnRef);
+
+        try {
+            transactionService.topUp(topUpRequest, order.getUserId());
+            order.setStatus(PaymentOrderStatus.SUCCESS);
+            order.setVnpResponseCode(vnp_ResponseCode);
+            paymentOrderRepository.save(order);
+            log.info("Đã nạp thành công {} VNĐ cho user {} (TxnRef: {})",
+                    order.getAmount(), order.getUserId(), vnp_TxnRef);
+            return new SettlementResult.Credited(order.getAmount());
+        } catch (com.sonnhuynhh.primewallet.common.exception.AccountLockedException
+                 | com.sonnhuynhh.primewallet.common.exception.KycRequiredException e) {
+            log.error("Lỗi nghiệp vụ khi nạp tiền (cần đối soát tay): {}", e.getMessage());
+            markFailed(order, vnp_ResponseCode, "Nạp ví thất bại: " + e.getMessage());
+            return new SettlementResult.BusinessError(e.getMessage());
+        }
+    }
+
+    /** Kết quả nội bộ của settlePaymentOrder. */
+    private sealed interface SettlementResult {
+        record AlreadyDone() implements SettlementResult {}
+        record OrderNotFound() implements SettlementResult {}
+        record Forbidden() implements SettlementResult {}
+        record InvalidAmount() implements SettlementResult {}
+        record Cancelled() implements SettlementResult {}
+        record Credited(BigDecimal amount) implements SettlementResult {}
+        record BusinessError(String reason) implements SettlementResult {}
     }
 
     /**
