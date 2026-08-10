@@ -5,6 +5,7 @@ const WALLET_MODE_KEY = "prime_active_wallet_mode";
 import { changePassword, getProfile, login, register, updateProfile as updateProfileRequest } from "../services/auth";
 import { getMyAccount } from "../services/wallet";
 import { clearTokens, getTokens, saveTokens } from "../storage/tokenStore";
+import { HttpError } from "../services/http";
 import type { AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest, SessionState, UpdateProfileRequest } from "../types/api";
 
 type AuthContextValue = {
@@ -53,8 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const profile = await getProfile();
-      const account = await getMyAccount();
+      const [profile, account] = await Promise.all([getProfile(), getMyAccount()]);
 
       setSession({
         auth: {
@@ -67,9 +67,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         account,
       });
-    } catch {
-      await clearTokens();
-      setSession(null);
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 0;
+      // Chỉ đăng xuất khi token thật sự hết hạn/không hợp lệ — không logout vì 429/500.
+      if (status === 401 || status === 403) {
+        await clearTokens();
+        setSession(null);
+      }
     }
   };
 

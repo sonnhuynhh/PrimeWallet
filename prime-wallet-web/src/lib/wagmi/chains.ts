@@ -46,6 +46,24 @@ export const FALLBACK_EXPLORER: Record<NetworkId, string> = {
 
 export const ETHERSCAN_V2_API = 'https://api.etherscan.io/v2/api';
 
+/**
+ * Endpoint V2 theo từng explorer — BSC/Polygon/Base cần gọi đúng domain
+ * (gói miễn phí không hỗ trợ các chain này qua api.etherscan.io/v2).
+ * @see https://docs.etherscan.io/v2-migration
+ */
+export const EXPLORER_V2_API: Record<NetworkId, string> = {
+  eth_mainnet: 'https://api.etherscan.io/v2/api',
+  eth_sepolia: 'https://api.etherscan.io/v2/api',
+  bsc_mainnet: 'https://api.bscscan.com/v2/api',
+  polygon_mainnet: 'https://api.polygonscan.com/v2/api',
+  base_mainnet: 'https://api.basescan.org/v2/api',
+};
+
+export function explorerV2ApiOf(networkId: string): string {
+  const id = normalizeNetworkId(networkId);
+  return EXPLORER_V2_API[id] ?? ETHERSCAN_V2_API;
+}
+
 export const SUPPORTS_LOG_SCAN: Record<NetworkId, boolean> = {
   eth_mainnet: true,
   eth_sepolia: true,

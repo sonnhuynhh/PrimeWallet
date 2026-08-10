@@ -29,7 +29,6 @@ import java.util.Map;
  * - chainId: Chain ID theo EIP-155 — dùng để verify phòng tránh replay attack
  * - symbol: ký hiệu token gốc (ETH, BNB, POL…)
  * - explorerUrl: link block explorer (hiển thị trong UI)
- * - etherscanApiUrl: base URL Etherscan API để tra lịch sử (nếu có)
  */
 @Configuration
 @ConfigurationProperties(prefix = "blockchain")
@@ -48,7 +47,6 @@ public class BlockchainProperties {
         private String symbol;
         private String label;
         private String explorerUrl;
-        private String etherscanApiUrl;
         private boolean testnet = true;
     }
 }

@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import { confirmVnPayPayment } from '../services/payment';
 import { motion } from 'framer-motion';
 import { AppIcon } from '@/components/ui/AppIcon';
 
 export function VnPayReturn() {
   const [searchParams] = useSearchParams();
-  const { reloadSession } = useAuth();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('Đang xác nhận giao dịch với máy chủ...');
 
@@ -22,12 +20,11 @@ export function VnPayReturn() {
         }
 
         const result = await confirmVnPayPayment(`?${query}`);
-        await reloadSession();
 
         if (result.credited || result.alreadyProcessed) {
           setStatus('success');
           setMessage(result.message);
-          // Báo cửa sổ cha (FiatShell) reload số dư
+          // Cửa sổ cha (FiatShell) reload số dư — popup không gọi reloadSession để tránh 429/logout.
           if (window.opener) {
             window.opener.postMessage({ type: 'vnpay:success' }, window.location.origin);
           }
@@ -43,7 +40,7 @@ export function VnPayReturn() {
       }
     };
     void run();
-  }, [searchParams, reloadSession]);
+  }, [searchParams]);
 
   const isSuccess = status === 'success';
 

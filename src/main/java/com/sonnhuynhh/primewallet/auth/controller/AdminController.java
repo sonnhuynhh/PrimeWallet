@@ -10,6 +10,7 @@ import com.sonnhuynhh.primewallet.wallet.entity.DailyReport;
 import com.sonnhuynhh.primewallet.wallet.service.ReconciliationService;
 import com.sonnhuynhh.primewallet.wallet.service.EtherscanService;
 import com.sonnhuynhh.primewallet.wallet.dto.EtherscanResponse;
+import com.sonnhuynhh.primewallet.wallet.enums.BlockchainNetwork;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -185,12 +186,14 @@ public class AdminController {
     }
 
     /**
-     * Tra cứu lịch sử giao dịch Crypto qua Etherscan.
+     * Tra cứu lịch sử giao dịch Crypto qua Etherscan V2 (cần {@code etherscan.api-key}).
      */
     @GetMapping("/crypto/history")
     public ResponseEntity<ApiResponse<EtherscanResponse>> getCryptoHistory(
-            @RequestParam String address) {
-        EtherscanResponse response = etherscanService.getTransactionHistory(address);
+            @RequestParam String address,
+            @RequestParam(defaultValue = "eth_sepolia") String network) {
+        var blockchainNetwork = BlockchainNetwork.fromIdWithLegacy(network);
+        EtherscanResponse response = etherscanService.getTransactionHistory(address, blockchainNetwork);
         return ResponseEntity.ok(ApiResponse.success("Lịch sử giao dịch ví", response));
     }
 }

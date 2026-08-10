@@ -1,8 +1,6 @@
-import { chainIdOf, ETHERSCAN_V2_API, normalizeNetworkId, type NetworkId } from '@/lib/wagmi/chains';
+import { fetchEtherscanV2 } from '@/lib/etherscan/v2';
+import { normalizeNetworkId } from '@/lib/wagmi/chains';
 import type { EtherscanTransaction } from '@/types/crypto';
-
-/** URL explorer API legacy — chỉ dùng khi V2 không hỗ trợ (hiếm). */
-const LEGACY_EXPLORER_API: Partial<Record<NetworkId, string>> = {};
 
 function normalizeTxList(result: unknown): EtherscanTransaction[] {
   if (!Array.isArray(result)) return [];
@@ -20,7 +18,8 @@ function normalizeTxList(result: unknown): EtherscanTransaction[] {
 }
 
 /**
- * Fallback client-side: gọi Etherscan V2 (hoặc BscScan) khi backend trả rỗng.
+ * Fallback client-side: gọi Etherscan V2 khi backend trả rỗng.
+ * Một key cho ETH, BSC, Polygon, Base, Sepolia… (tham số chainid).
  * Cần VITE_ETHERSCAN_API_KEY trong .env.local.
  */
 export async function fetchOnChainTransactions(
@@ -31,8 +30,7 @@ export async function fetchOnChainTransactions(
   if (!apiKey) return [];
 
   const network = normalizeNetworkId(networkId);
-  const legacy = LEGACY_EXPLORER_API[network];
-  const params = new URLSearchParams({
+  const body = await fetchEtherscanV2<unknown>(network, {
     module: 'account',
     action: 'txlist',
     address,
@@ -41,21 +39,18 @@ export async function fetchOnChainTransactions(
     page: '1',
     offset: '100',
     sort: 'desc',
-    apikey: apiKey,
-  });
+  }, apiKey);
 
-  if (legacy) {
-    const response = await fetch(`${legacy}?${params.toString()}`);
-    if (!response.ok) return [];
-    const body = (await response.json()) as { result?: unknown };
-    return normalizeTxList(body.result);
+  if (!body) return [];
+  if (Array.isArray(body.result)) return normalizeTxList(body.result);
+
+  const detail = typeof body.result === 'string' ? body.result : '';
+  const msg = `${body.message ?? ''} ${detail}`.toLowerCase();
+  if (msg.includes('no transactions') || msg.includes('no record found') || msg.includes('no tx found')) {
+    return [];
   }
 
-  params.set('chainid', String(chainIdOf(network)));
-  const response = await fetch(`${ETHERSCAN_V2_API}?${params.toString()}`);
-  if (!response.ok) return [];
-  const body = (await response.json()) as { result?: unknown };
-  return normalizeTxList(body.result);
+  return [];
 }
 
 /** Đảm bảo result luôn là mảng — backend/Etherscan đôi khi trả chuỗi. */

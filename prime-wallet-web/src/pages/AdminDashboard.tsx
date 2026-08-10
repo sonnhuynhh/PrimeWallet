@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   ShieldAlert,
@@ -21,6 +22,22 @@ import {
   ArrowUpFromLine,
   Send,
   ExternalLink,
+  ArrowLeft,
+  Hash,
+  Clock,
+  Mail,
+  UserCircle,
+  Globe,
+  Filter,
+  Inbox,
+  ShieldCheck,
+  Activity,
+  LogIn,
+  Banknote,
+  CreditCard,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -48,8 +65,23 @@ import { useConfirm } from '../components/ui/ConfirmDialog';
 import { toastOk, toastErr } from '../components/feedback/toast';
 import { AuroraBackground } from '@/components/marketing/AuroraBackground';
 import { fmtVnd, fmtNumber } from '@/lib/utils';
+import { normalizeEtherscanResult, fetchOnChainTransactions } from '@/lib/onchain/history';
+import { formatExplorerError } from '@/lib/etherscan/errors';
+import { etherscanApiKey } from '@/lib/env';
+import { nativeSymbolOf, txUrl, type NetworkId } from '@/lib/wagmi/chains';
+import { isAddress } from 'viem';
+import { NetworkIcon } from '@/components/ui/NetworkIcon';
+import { cn } from '@/lib/utils';
 
 type AdminTab = 'users' | 'logs' | 'crypto' | 'transactions';
+
+const CRYPTO_NETWORKS: { id: NetworkId; label: string }[] = [
+  { id: 'eth_sepolia', label: 'Ethereum Sepolia' },
+  { id: 'eth_mainnet', label: 'Ethereum Mainnet' },
+  { id: 'bsc_mainnet', label: 'BNB Smart Chain' },
+  { id: 'polygon_mainnet', label: 'Polygon' },
+  { id: 'base_mainnet', label: 'Base' },
+];
 
 const TABS: readonly TabItem<AdminTab>[] = [
   { id: 'users', label: 'Người dùng', icon: Users },
@@ -59,18 +91,37 @@ const TABS: readonly TabItem<AdminTab>[] = [
 ];
 
 /** Nhãn loại giao dịch — gom về một chỗ để bảng và bộ lọc không lệch nhau. */
-const TX_TYPES: Record<string, { label: string; variant: 'success' | 'danger' | 'info' | 'warning' }> = {
-  TOPUP: { label: 'Nạp', variant: 'success' },
-  WITHDRAW: { label: 'Rút', variant: 'danger' },
-  TRANSFER: { label: 'Chuyển', variant: 'info' },
-  PAYMENT: { label: 'Thanh toán', variant: 'warning' },
+const TX_TYPES: Record<
+  string,
+  { label: string; variant: 'success' | 'danger' | 'info' | 'warning'; icon: LucideIcon }
+> = {
+  TOPUP: { label: 'Nạp', variant: 'success', icon: ArrowDownToLine },
+  WITHDRAW: { label: 'Rút', variant: 'danger', icon: ArrowUpFromLine },
+  TRANSFER: { label: 'Chuyển', variant: 'info', icon: Send },
+  PAYMENT: { label: 'Thanh toán', variant: 'warning', icon: CreditCard },
 };
+
+function logActionIcon(action: string): LucideIcon {
+  const a = action.toUpperCase();
+  if (a.includes('LOGIN') || a.includes('LOGOUT') || a.includes('AUTH')) return LogIn;
+  if (a.includes('KYC')) return ShieldCheck;
+  if (a.includes('LOCK') || a.includes('UNLOCK')) return Lock;
+  if (a.includes('RECONCILE')) return RefreshCw;
+  if (a.includes('TRANSFER') || a.includes('PAYMENT') || a.includes('TOPUP') || a.includes('WITHDRAW')) {
+    return ArrowLeftRight;
+  }
+  return Activity;
+}
 
 function TxTypeBadge({ type }: { type: string }) {
   const m = TX_TYPES[type];
   if (!m) return <Badge>{type}</Badge>;
+  const Icon = m.icon;
   return (
-    <Badge variant={m.variant === 'info' ? 'primary' : m.variant}>{m.label}</Badge>
+    <Badge variant={m.variant === 'info' ? 'primary' : m.variant} className="gap-1">
+      <Icon className="h-3 w-3" />
+      {m.label}
+    </Badge>
   );
 }
 
@@ -99,19 +150,64 @@ function StatTile({
   label,
   value,
   tone = 'text-white',
+  iconClassName = 'bg-white/5 text-slate-400',
 }: {
   icon: LucideIcon;
   label: string;
   value: string;
   tone?: string;
+  iconClassName?: string;
 }) {
   return (
     <Card bare className="p-4">
-      <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
-        <Icon className="h-3.5 w-3.5" /> {label}
-      </p>
-      <p className={`text-xl font-black ${tone}`}>{value}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="mb-2 text-[11px] font-semibold tracking-wider text-slate-400 uppercase">{label}</p>
+          <p className={`text-xl font-black ${tone}`}>{value}</p>
+        </div>
+        <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-2xl', iconClassName)}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
     </Card>
+  );
+}
+
+function ThIcon({
+  icon: Icon,
+  children,
+  className,
+}: {
+  icon: LucideIcon;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th className={cn(TH, className)}>
+      <span className="inline-flex items-center gap-1.5">
+        <Icon className="h-3.5 w-3.5 opacity-70" />
+        {children}
+      </span>
+    </th>
+  );
+}
+
+function EmptyRow({
+  colSpan,
+  icon: Icon,
+  message,
+}: {
+  colSpan: number;
+  icon: LucideIcon;
+  message: string;
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="p-10 text-center text-slate-500">
+        <Icon className="mx-auto mb-3 h-9 w-9 opacity-35" />
+        <p>{message}</p>
+      </td>
+    </tr>
   );
 }
 
@@ -179,6 +275,7 @@ const TH = 'p-4 text-left text-xs font-semibold tracking-wider text-slate-400 up
 
 export function AdminDashboard() {
   const { session } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
   const [usersPage, setUsersPage] = useState<Page<AdminUserResponse> | null>(null);
   const [logsPage, setLogsPage] = useState<Page<AuditLogResponse> | null>(null);
@@ -190,6 +287,7 @@ export function AdminDashboard() {
 
   // Tab tra cứu blockchain
   const [cryptoAddress, setCryptoAddress] = useState('');
+  const [cryptoNetwork, setCryptoNetwork] = useState<NetworkId>('eth_sepolia');
   const [cryptoHistory, setCryptoHistory] = useState<EtherscanTransaction[]>([]);
   const [cryptoLoading, setCryptoLoading] = useState(false);
   const [searchedAddress, setSearchedAddress] = useState('');
@@ -274,12 +372,27 @@ export function AdminDashboard() {
     e.preventDefault();
     const address = cryptoAddress.trim();
     if (!address) return;
+    if (!isAddress(address)) {
+      toastErr(null, 'Địa chỉ ví không hợp lệ — phải bắt đầu 0x và đủ 42 ký tự (40 hex)');
+      return;
+    }
     try {
       setCryptoLoading(true);
-      const res = await getAdminCryptoHistory(address);
-      setCryptoHistory(res.status === '1' ? res.result : []);
+      const res = await getAdminCryptoHistory(address, cryptoNetwork);
+      let txs = normalizeEtherscanResult(res.result);
+
+      // Backend rỗng/lỗi → thử explorer V2 đúng domain (BscScan cho BSC…)
+      if (txs.length === 0) {
+        const key = etherscanApiKey();
+        if (key) txs = await fetchOnChainTransactions(cryptoNetwork, address, key);
+      }
+
+      setCryptoHistory(txs);
       setSearchedAddress(address);
-      if (res.status !== '1') toastErr(null, 'Không tìm thấy giao dịch nào cho địa chỉ này');
+
+      if (txs.length === 0 && res.status !== '1' && !etherscanApiKey()) {
+        toastErr(null, formatExplorerError(res.message));
+      }
     } catch (error) {
       toastErr(error, 'Không tra cứu được ví');
     } finally {
@@ -382,15 +495,20 @@ export function AdminDashboard() {
             </div>
           </div>
 
-          <Button
-            variant="secondary"
-            fullWidth={false}
-            loading={reconciling}
-            onClick={handleReconcile}
-            className="border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
-          >
-            <RefreshCw className="h-4 w-4" /> Chạy đối soát
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" fullWidth={false} onClick={() => navigate('/wallet-type')}>
+              <ArrowLeft className="h-4 w-4" /> Về trang chính
+            </Button>
+            <Button
+              variant="secondary"
+              fullWidth={false}
+              loading={reconciling}
+              onClick={handleReconcile}
+              className="border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+            >
+              <RefreshCw className="h-4 w-4" /> Chạy đối soát
+            </Button>
+          </div>
         </div>
 
         <TabBar tabs={TABS} value={activeTab} onChange={setActiveTab} layoutId="admin-tab" />
@@ -398,16 +516,30 @@ export function AdminDashboard() {
         {activeTab === 'crypto' && (
           <Card>
             <CardHeader
-              title="Tra cứu ví trên Etherscan"
-              description="Nhập địa chỉ ví bất kỳ để xem lịch sử giao dịch on-chain (Sepolia testnet)."
+              title="Tra cứu ví trên Blockchain"
+              description="Nhập địa chỉ ví và chọn mạng để xem lịch sử giao dịch on-chain qua Etherscan."
               icon={<Bitcoin className="h-5 w-5" />}
             />
 
             <form onSubmit={handleSearchCrypto} className="mb-6 flex flex-wrap items-end gap-3">
+              <div className="flex items-center gap-2 rounded-xl border border-[--color-border] bg-slate-900/80 px-2">
+                <NetworkIcon networkId={cryptoNetwork} size={24} className="ml-1" />
+                <select
+                  value={cryptoNetwork}
+                  onChange={(e) => setCryptoNetwork(e.target.value as NetworkId)}
+                  className="h-11 bg-transparent pr-3 text-sm text-slate-300 outline-none focus:border-[--color-primary]"
+                >
+                  {CRYPTO_NETWORKS.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <SearchBox
                 value={cryptoAddress}
                 onChange={setCryptoAddress}
-                placeholder="0x..."
+                placeholder="0x… (42 ký tự)"
                 className="min-w-65 flex-1"
               />
               <Button type="submit" fullWidth={false} loading={cryptoLoading} disabled={!cryptoAddress.trim()}>
@@ -419,10 +551,10 @@ export function AdminDashboard() {
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
                   <tr className="border-b border-[--color-border]">
-                    <th className={TH}>Hash</th>
-                    <th className={TH}>Thời gian</th>
-                    <th className={TH}>Chiều / Đối tác</th>
-                    <th className={TH}>Số lượng</th>
+                    <ThIcon icon={Hash}>Hash</ThIcon>
+                    <ThIcon icon={Clock}>Thời gian</ThIcon>
+                    <ThIcon icon={ArrowLeftRight}>Chiều / Đối tác</ThIcon>
+                    <ThIcon icon={Banknote}>Số lượng</ThIcon>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -439,13 +571,14 @@ export function AdminDashboard() {
                   {!cryptoLoading &&
                     cryptoHistory.map((tx) => {
                       const isReceive = tx.to?.toLowerCase() === searchedAddress.toLowerCase();
-                      const eth = (Number(tx.value) / 1e18).toFixed(6);
+                      const amount = (Number(tx.value) / 1e18).toFixed(6);
+                      const symbol = nativeSymbolOf(cryptoNetwork);
                       const peer = isReceive ? tx.from : tx.to;
                       return (
                         <tr key={tx.hash} className="transition-colors hover:bg-white/3">
                           <td className="p-4 font-mono text-xs text-slate-400">
                             <a
-                              href={`https://sepolia.etherscan.io/tx/${tx.hash}`}
+                              href={txUrl(cryptoNetwork, tx.hash)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 hover:text-[--color-primary]"
@@ -457,26 +590,49 @@ export function AdminDashboard() {
                             {new Date(Number(tx.timeStamp) * 1000).toLocaleString('vi-VN')}
                           </td>
                           <td className="p-4">
-                            <Badge variant={isReceive ? 'success' : 'danger'}>
-                              {isReceive ? 'NHẬN' : 'GỬI'}
-                            </Badge>
-                            <span className="ml-2 font-mono text-xs text-slate-500">
-                              {peer ? `${peer.slice(0, 10)}…${peer.slice(-4)}` : '—'}
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  'grid h-8 w-8 shrink-0 place-items-center rounded-lg',
+                                  isReceive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400',
+                                )}
+                              >
+                                {isReceive ? (
+                                  <ArrowDownLeft className="h-4 w-4" />
+                                ) : (
+                                  <ArrowUpRight className="h-4 w-4" />
+                                )}
+                              </span>
+                              <div>
+                                <Badge variant={isReceive ? 'success' : 'danger'}>
+                                  {isReceive ? 'NHẬN' : 'GỬI'}
+                                </Badge>
+                                <span className="ml-2 font-mono text-xs text-slate-500">
+                                  {peer ? `${peer.slice(0, 10)}…${peer.slice(-4)}` : '—'}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4 font-bold text-white">
+                            <span className="inline-flex items-center gap-1.5">
+                              <NetworkIcon networkId={cryptoNetwork} size={18} />
+                              {amount} {symbol}
                             </span>
                           </td>
-                          <td className="p-4 font-bold text-white">{eth} ETH</td>
                         </tr>
                       );
                     })}
 
                   {!cryptoLoading && !cryptoHistory.length && (
-                    <tr>
-                      <td colSpan={4} className="p-10 text-center text-slate-500">
-                        {searchedAddress
+                    <EmptyRow
+                      colSpan={4}
+                      icon={Inbox}
+                      message={
+                        searchedAddress
                           ? 'Địa chỉ này chưa có giao dịch nào'
-                          : 'Nhập địa chỉ ví để bắt đầu tra cứu'}
-                      </td>
-                    </tr>
+                          : 'Nhập địa chỉ ví để bắt đầu tra cứu'
+                      }
+                    />
                   )}
                 </tbody>
               </table>
@@ -487,12 +643,12 @@ export function AdminDashboard() {
         {activeTab === 'transactions' && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-              <StatTile icon={User} label="Người dùng" value={fmtNumber(stats?.totalUsers ?? 0, 0)} />
-              <StatTile icon={Wallet} label="Ví" value={fmtNumber(stats?.totalAccounts ?? 0, 0)} />
-              <StatTile icon={ReceiptText} label="Giao dịch" value={fmtNumber(stats?.totalTransactions ?? 0, 0)} />
-              <StatTile icon={ArrowDownToLine} label="Nạp hôm nay" value={fmtVnd(stats?.totalTopUp ?? 0)} tone="text-emerald-400" />
-              <StatTile icon={ArrowUpFromLine} label="Rút hôm nay" value={fmtVnd(stats?.totalWithdraw ?? 0)} tone="text-rose-400" />
-              <StatTile icon={Send} label="Chuyển hôm nay" value={fmtVnd(stats?.totalTransfer ?? 0)} tone="text-sky-400" />
+              <StatTile icon={User} label="Người dùng" value={fmtNumber(stats?.totalUsers ?? 0, 0)} iconClassName="bg-sky-500/15 text-sky-400" />
+              <StatTile icon={Wallet} label="Ví" value={fmtNumber(stats?.totalAccounts ?? 0, 0)} iconClassName="bg-violet-500/15 text-violet-400" />
+              <StatTile icon={ReceiptText} label="Giao dịch" value={fmtNumber(stats?.totalTransactions ?? 0, 0)} iconClassName="bg-amber-500/15 text-amber-400" />
+              <StatTile icon={ArrowDownToLine} label="Nạp hôm nay" value={fmtVnd(stats?.totalTopUp ?? 0)} tone="text-emerald-400" iconClassName="bg-emerald-500/15 text-emerald-400" />
+              <StatTile icon={ArrowUpFromLine} label="Rút hôm nay" value={fmtVnd(stats?.totalWithdraw ?? 0)} tone="text-rose-400" iconClassName="bg-rose-500/15 text-rose-400" />
+              <StatTile icon={Send} label="Chuyển hôm nay" value={fmtVnd(stats?.totalTransfer ?? 0)} tone="text-sky-400" iconClassName="bg-sky-500/15 text-sky-400" />
             </div>
 
             <Card>
@@ -524,47 +680,53 @@ export function AdminDashboard() {
                   placeholder="Tìm theo mã GD, số ví nguồn/đích, mô tả..."
                   className="min-w-60 flex-1"
                 />
-                <select
-                  value={txType}
-                  onChange={(e) => {
-                    setTxType(e.target.value);
-                    debouncedFetch(0);
-                  }}
-                  className="rounded-xl border border-[--color-border] bg-slate-900/80 px-3 text-sm text-slate-300 outline-none focus:border-[--color-primary]"
-                >
-                  <option value="">Tất cả loại</option>
-                  {Object.entries(TX_TYPES).map(([key, m]) => (
-                    <option key={key} value={key}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={txStatus}
-                  onChange={(e) => {
-                    setTxStatus(e.target.value);
-                    debouncedFetch(0);
-                  }}
-                  className="rounded-xl border border-[--color-border] bg-slate-900/80 px-3 text-sm text-slate-300 outline-none focus:border-[--color-primary]"
-                >
-                  <option value="">Tất cả trạng thái</option>
-                  <option value="SUCCESS">SUCCESS</option>
-                  <option value="PENDING">PENDING</option>
-                  <option value="FAILED">FAILED</option>
-                  <option value="REVERSED">REVERSED</option>
-                </select>
+                <div className="flex items-center gap-2 rounded-xl border border-[--color-border] bg-slate-900/80 px-3">
+                  <Filter className="h-4 w-4 text-slate-500" />
+                  <select
+                    value={txType}
+                    onChange={(e) => {
+                      setTxType(e.target.value);
+                      debouncedFetch(0);
+                    }}
+                    className="h-11 bg-transparent text-sm text-slate-300 outline-none"
+                  >
+                    <option value="">Tất cả loại</option>
+                    {Object.entries(TX_TYPES).map(([key, m]) => (
+                      <option key={key} value={key}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 rounded-xl border border-[--color-border] bg-slate-900/80 px-3">
+                  <Layers className="h-4 w-4 text-slate-500" />
+                  <select
+                    value={txStatus}
+                    onChange={(e) => {
+                      setTxStatus(e.target.value);
+                      debouncedFetch(0);
+                    }}
+                    className="h-11 bg-transparent text-sm text-slate-300 outline-none"
+                  >
+                    <option value="">Tất cả trạng thái</option>
+                    <option value="SUCCESS">SUCCESS</option>
+                    <option value="PENDING">PENDING</option>
+                    <option value="FAILED">FAILED</option>
+                    <option value="REVERSED">REVERSED</option>
+                  </select>
+                </div>
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-[--color-border]">
                 <table className="w-full border-collapse">
                   <thead className="bg-white/3">
                     <tr className="border-b border-[--color-border]">
-                      <th className={TH}>Mã GD</th>
-                      <th className={TH}>Loại</th>
-                      <th className={TH}>Nguồn → Đích</th>
-                      <th className={`${TH} text-right`}>Số tiền</th>
-                      <th className={TH}>Trạng thái</th>
-                      <th className={TH}>Thời gian</th>
+                      <ThIcon icon={Hash}>Mã GD</ThIcon>
+                      <ThIcon icon={Layers}>Loại</ThIcon>
+                      <ThIcon icon={ArrowLeftRight}>Nguồn → Đích</ThIcon>
+                      <ThIcon icon={Banknote} className="text-right">Số tiền</ThIcon>
+                      <ThIcon icon={ShieldCheck}>Trạng thái</ThIcon>
+                      <ThIcon icon={Clock}>Thời gian</ThIcon>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
@@ -601,11 +763,7 @@ export function AdminDashboard() {
                       ))}
 
                     {!loading && !txPage?.content?.length && (
-                      <tr>
-                        <td colSpan={6} className="p-10 text-center text-slate-500">
-                          Không có giao dịch nào khớp bộ lọc
-                        </td>
-                      </tr>
+                      <EmptyRow colSpan={6} icon={ReceiptText} message="Không có giao dịch nào khớp bộ lọc" />
                     )}
                   </tbody>
                 </table>
@@ -654,17 +812,19 @@ export function AdminDashboard() {
                   <tr className="border-b border-[--color-border]">
                     {activeTab === 'users' ? (
                       <>
-                        <th className={TH}>Tên / Email</th>
-                        <th className={TH}>KYC</th>
-                        <th className={TH}>Tài khoản</th>
-                        <th className={`${TH} text-right`}>Thao tác</th>
+                        <ThIcon icon={UserCircle}>Tên / Email</ThIcon>
+                        <ThIcon icon={ShieldCheck}>KYC</ThIcon>
+                        <ThIcon icon={User}>Tài khoản</ThIcon>
+                        <ThIcon icon={Layers} className="text-right">
+                          Thao tác
+                        </ThIcon>
                       </>
                     ) : (
                       <>
-                        <th className={TH}>Thời gian</th>
-                        <th className={TH}>Hành động</th>
-                        <th className={TH}>Chi tiết</th>
-                        <th className={TH}>IP</th>
+                        <ThIcon icon={Clock}>Thời gian</ThIcon>
+                        <ThIcon icon={Activity}>Hành động</ThIcon>
+                        <ThIcon icon={FileText}>Chi tiết</ThIcon>
+                        <ThIcon icon={Globe}>IP</ThIcon>
                       </>
                     )}
                   </tr>
@@ -685,8 +845,18 @@ export function AdminDashboard() {
                     usersPage?.content.map((user) => (
                       <tr key={user.id} className="transition-colors hover:bg-white/3">
                         <td className="p-4">
-                          <p className="font-bold text-white">{user.fullName}</p>
-                          <p className="text-sm text-slate-400">{user.email}</p>
+                          <div className="flex items-center gap-3">
+                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-500/15 text-sky-400">
+                              <UserCircle className="h-5 w-5" />
+                            </span>
+                            <div>
+                              <p className="font-bold text-white">{user.fullName}</p>
+                              <p className="flex items-center gap-1 text-sm text-slate-400">
+                                <Mail className="h-3 w-3 opacity-60" />
+                                {user.email}
+                              </p>
+                            </div>
+                          </div>
                         </td>
                         <td className="p-4">
                           <StatusBadge status={user.kycStatus} />
@@ -739,23 +909,39 @@ export function AdminDashboard() {
                     logsPage?.content.map((log) => (
                       <tr key={log.id} className="transition-colors hover:bg-white/3">
                         <td className="p-4 text-sm text-slate-400">
-                          {new Date(log.createdAt).toLocaleString('vi-VN')}
+                          <span className="inline-flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 opacity-60" />
+                            {new Date(log.createdAt).toLocaleString('vi-VN')}
+                          </span>
                         </td>
                         <td className="p-4">
-                          <Badge variant="outline">{log.action}</Badge>
+                          {(() => {
+                            const LogIcon = logActionIcon(log.action);
+                            return (
+                              <Badge variant="outline" className="gap-1">
+                                <LogIcon className="h-3 w-3" />
+                                {log.action}
+                              </Badge>
+                            );
+                          })()}
                         </td>
                         <td className="p-4 text-sm text-slate-300">{log.detail}</td>
-                        <td className="p-4 font-mono text-xs text-slate-500">{log.ipAddress || 'N/A'}</td>
+                        <td className="p-4 font-mono text-xs text-slate-500">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Globe className="h-3.5 w-3.5 opacity-60" />
+                            {log.ipAddress || 'N/A'}
+                          </span>
+                        </td>
                       </tr>
                     ))}
 
                   {!loading &&
                     (activeTab === 'users' ? !usersPage?.content?.length : !logsPage?.content?.length) && (
-                      <tr>
-                        <td colSpan={4} className="p-10 text-center text-slate-500">
-                          Không có dữ liệu
-                        </td>
-                      </tr>
+                      <EmptyRow
+                        colSpan={4}
+                        icon={activeTab === 'users' ? Users : FileText}
+                        message="Không có dữ liệu"
+                      />
                     )}
                 </tbody>
               </table>
@@ -772,7 +958,17 @@ export function AdminDashboard() {
 
       {confirmDialogEl}
 
-      <Modal isOpen={rejectTarget !== null} onClose={() => setRejectTarget(null)} title="Từ chối KYC" size="sm">
+      <Modal
+        isOpen={rejectTarget !== null}
+        onClose={() => setRejectTarget(null)}
+        title={
+          <span className="inline-flex items-center gap-2">
+            <XCircle className="h-5 w-5 text-amber-400" />
+            Từ chối KYC
+          </span>
+        }
+        size="sm"
+      >
         <p className="mb-4 text-sm text-slate-400">
           Lý do sẽ được ghi vào nhật ký kiểm toán và gửi kèm cho{' '}
           <span className="font-bold text-slate-200">{rejectTarget?.email}</span>.

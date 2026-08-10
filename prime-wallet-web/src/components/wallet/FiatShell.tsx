@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -110,18 +110,26 @@ export function FiatShell() {
     if (tab === 'history') loadHistory();
   }, [tab]);
 
-  // Reload số dư khi popup VNPAY đóng hoặc báo thành công
+  // Reload số dư khi popup VNPAY báo thành công (debounce — tránh 429)
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    const onFocus = () => void reloadSession();
+    const scheduleReload = () => {
+      if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+      reloadTimerRef.current = setTimeout(() => {
+        void reloadSession();
+      }, 400);
+    };
+
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      if (event.data?.type === 'vnpay:success') void reloadSession();
+      if (event.data?.type === 'vnpay:success') scheduleReload();
     };
-    window.addEventListener('focus', onFocus);
+
     window.addEventListener('message', onMessage);
     return () => {
-      window.removeEventListener('focus', onFocus);
       window.removeEventListener('message', onMessage);
+      if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
     };
   }, [reloadSession]);
 

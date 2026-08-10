@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title: React.ReactNode;
   description?: string;
   children: React.ReactNode;
   /** Mặc định max-w-md như bản cũ; modal swap/quyền cần rộng hơn. */
@@ -84,7 +84,9 @@ export function Modal({
                         {description}
                       </Dialog.Description>
                     ) : (
-                      <Dialog.Description className="sr-only">{title}</Dialog.Description>
+                      <Dialog.Description className="sr-only">
+                        {typeof title === 'string' ? title : 'Hộp thoại'}
+                      </Dialog.Description>
                     )}
                   </div>
                   {dismissible ? (

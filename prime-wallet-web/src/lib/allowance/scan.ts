@@ -9,7 +9,8 @@ import {
 } from 'viem';
 import { erc20Abi, multicall3Abi } from '@/lib/dex/abis';
 import { MULTICALL3_ADDRESS } from '@/lib/dex/constants';
-import { ETHERSCAN_V2_API, SUPPORTS_LOG_SCAN, chainIdOf, type NetworkId } from '@/lib/wagmi/chains';
+import { fetchEtherscanV2 } from '@/lib/etherscan/v2';
+import { SUPPORTS_LOG_SCAN, type NetworkId } from '@/lib/wagmi/chains';
 import { knownSpenderOf, knownSpendersFor } from './knownSpenders';
 
 /**
@@ -76,24 +77,23 @@ async function scanApprovalLogs(
   const ownerTopic = `0x${owner.slice(2).toLowerCase().padStart(64, '0')}`;
 
   for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const params = new URLSearchParams({
-      chainid: String(chainIdOf(networkId)),
-      module: 'logs',
-      action: 'getLogs',
-      fromBlock: '0',
-      toBlock: 'latest',
-      topic0: APPROVAL_TOPIC,
-      topic1: ownerTopic,
-      topic0_1_opr: 'and',
-      page: String(page),
-      offset: String(PAGE_SIZE),
-    });
-    if (apiKey) params.set('apikey', apiKey);
+    const body = await fetchEtherscanV2<EtherscanLog[] | string>(
+      networkId,
+      {
+        module: 'logs',
+        action: 'getLogs',
+        fromBlock: '0',
+        toBlock: 'latest',
+        topic0: APPROVAL_TOPIC,
+        topic1: ownerTopic,
+        topic0_1_opr: 'and',
+        page: String(page),
+        offset: String(PAGE_SIZE),
+      },
+      apiKey,
+    );
+    if (!body) break;
 
-    const response = await fetch(`${ETHERSCAN_V2_API}?${params.toString()}`);
-    if (!response.ok) break;
-
-    const body = (await response.json()) as { status: string; result: EtherscanLog[] | string };
     if (body.status !== '1' || !Array.isArray(body.result)) break;
 
     for (const log of body.result) {

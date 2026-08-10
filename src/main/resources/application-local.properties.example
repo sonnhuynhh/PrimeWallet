@@ -28,8 +28,9 @@ vnpay.hash-secret=YOUR_REAL_HASH_SECRET
 # URL frontend nhận redirect sau thanh toán (VD: http://localhost:5173/vnpay-return)
 vnpay.return-url=http://localhost:5173/vnpay-return
 
-# ==================== ETHERSCAN / EXPLORER ====================
-# API key miễn phí tại https://etherscan.io/apis
+# ==================== ETHERSCAN V2 (đa chuỗi) ====================
+# Một API key tại https://etherscan.io/apis — dùng cho ETH, Sepolia, BSC, Polygon, Base…
+# KHÔNG cần đăng ký riêng BscScan/PolygonScan.
 etherscan.api-key=YOUR_ETHERSCAN_API_KEY
 
 # ==================== CORS (tùy chọn) ====================

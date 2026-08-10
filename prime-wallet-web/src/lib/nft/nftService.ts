@@ -1,13 +1,14 @@
 import { getAddress, type Address } from 'viem';
 import { getPublicClient } from '@/lib/wagmi/clients';
-import { ETHERSCAN_V2_API, chainIdOf, type NetworkId } from '@/lib/wagmi/chains';
+import { fetchEtherscanV2 } from '@/lib/etherscan/v2';
+import type { NetworkId } from '@/lib/wagmi/chains';
 
 /**
  * Danh sách NFT của một ví.
  *
  * Nguồn dữ liệu (theo thứ tự ưu tiên):
  * 1. **Alchemy NFT v3** — ảnh + tên + collection đầy đủ. Cần `VITE_ALCHEMY_API_KEY`.
- * 2. **Etherscan V2 `tokennfttx`** — liệt kê NFT đang giữ (cần `VITE_ETHERSCAN_API_KEY`).
+ * 2. **Etherscan V2 `tokennfttx`** — liệt kê NFT đang giữ (một key cho mọi mạng, cần `VITE_ETHERSCAN_API_KEY`).
  * 3. **On-chain `tokenURI`** — đọc metadata JSON từ contract (miễn phí, bổ sung ảnh/tên).
  */
 
@@ -207,25 +208,24 @@ async function fetchFromEtherscan(
   owner: Address,
   apiKey?: string,
 ): Promise<NftResult> {
-  const params = new URLSearchParams({
-    chainid: String(chainIdOf(networkId)),
-    module: 'account',
-    action: 'tokennfttx',
-    address: owner,
-    startblock: '0',
-    endblock: 'latest',
-    sort: 'asc',
-    page: '1',
-    offset: '1000',
-  });
-  if (apiKey) params.set('apikey', apiKey);
-
-  const response = await fetch(`${ETHERSCAN_V2_API}?${params.toString()}`);
-  if (!response.ok) {
+  const body = await fetchEtherscanV2<EtherscanNftTx[] | string>(
+    networkId,
+    {
+      module: 'account',
+      action: 'tokennfttx',
+      address: owner,
+      startblock: '0',
+      endblock: 'latest',
+      sort: 'asc',
+      page: '1',
+      offset: '1000',
+    },
+    apiKey,
+  );
+  if (!body) {
     return { kind: 'unavailable', reason: 'Không gọi được Etherscan để dựng danh sách NFT.' };
   }
 
-  const body = (await response.json()) as { status: string; result: EtherscanNftTx[] | string };
   if (body.status !== '1' || !Array.isArray(body.result)) {
     // status "0" với result rỗng nghĩa là không có giao dịch NFT nào — không phải lỗi.
     return { kind: 'ok', items: [], source: 'etherscan', truncated: false };

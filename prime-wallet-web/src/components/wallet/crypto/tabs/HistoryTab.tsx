@@ -56,7 +56,7 @@ export function HistoryTab() {
             rows = fallback;
           } else if (!etherscanApiKey()) {
             setOnchainHint(
-              'Chưa cấu hình API key Etherscan — thêm VITE_ETHERSCAN_API_KEY vào .env.local hoặc ETHERSCAN_API_KEY trên backend.',
+              'Chưa cấu hình API key Etherscan — thêm VITE_ETHERSCAN_API_KEY vào .env.local (một key cho ETH/BSC/Polygon/Base/Sepolia).',
             );
           }
         }
