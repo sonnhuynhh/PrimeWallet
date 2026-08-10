@@ -99,6 +99,15 @@ export interface TransactionResponse {
   createdAt: string;
 }
 
+export interface AuditLogResponse {
+  id: string;
+  userId?: string | null;
+  action: string;
+  details?: string | null;
+  ipAddress?: string | null;
+  createdAt: string;
+}
+
 export interface SessionState {
   auth: AuthResponse;
   profile: UserProfileResponse;

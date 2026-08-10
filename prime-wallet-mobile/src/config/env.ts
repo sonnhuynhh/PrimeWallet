@@ -1,41 +1,64 @@
 /**
- * Fix #15: API base URL cấu hình theo môi trường thay vì hardcode IP LAN.
+ * API base URL — đồng bộ với prime-wallet-web (VITE_API_BASE_URL).
  *
- * Ưu tiên biến môi trường EXPO_PUBLIC_API_BASE_URL (đặt trong file .env hoặc
- * khi build EAS cho từng môi trường dev/staging/prod).
- *
- * Nếu KHÔNG đặt biến này:
- *   - Chạy web (localhost) → dùng http://localhost:8080
- *   - Chạy trên thiết bị/emulator → cần IP LAN của máy chạy backend,
- *     nên ta yêu cầu đặt EXPO_PUBLIC_API_BASE_URL và cảnh báo rõ ràng.
- *
- * Ví dụ file .env (đặt cùng cấp app.json):
- *   EXPO_PUBLIC_API_BASE_URL=http://192.168.1.10:8080
+ * Ưu tiên EXPO_PUBLIC_API_BASE_URL trong .env.
+ * Dev native: tự gợi ý theo platform nếu chưa cấu hình.
  */
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 
-const envUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+const envUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+const BACKEND_PORT = process.env.EXPO_PUBLIC_BACKEND_PORT ?? "8080";
 
-function resolveBaseUrl(): string {
-  if (envUrl && envUrl.length > 0) {
-    return envUrl;
+function devDefaultForPlatform(): string {
+  if (Platform.OS === "android") {
+    // Android Emulator: 10.0.2.2 = localhost của máy host
+    const isEmulator =
+      !Constants.isDevice ||
+      Constants.executionEnvironment === "storeClient";
+    if (isEmulator || __DEV__) {
+      return `http://10.0.2.2:${BACKEND_PORT}`;
+    }
+  }
+
+  if (Platform.OS === "ios" && !Constants.isDevice) {
+    return `http://localhost:${BACKEND_PORT}`;
   }
 
   if (Platform.OS === "web") {
-    return "http://localhost:8080";
+    return `http://localhost:${BACKEND_PORT}`;
   }
 
-  // Native (iOS/Android) không thể dùng "localhost" để trỏ tới máy dev.
-  // Cảnh báo dev đặt EXPO_PUBLIC_API_BASE_URL; fallback tạm về localhost.
-  if (__DEV__) {
+  return `http://localhost:${BACKEND_PORT}`;
+}
+
+function resolveBaseUrl(): string {
+  if (envUrl && envUrl.length > 0) {
+    return envUrl.replace(/\/$/, "");
+  }
+
+  const fallback = devDefaultForPlatform();
+
+  if (__DEV__ && Constants.isDevice) {
     console.warn(
-      "[env] EXPO_PUBLIC_API_BASE_URL chưa được đặt. " +
-        "Trên thiết bị thật/emulator hãy đặt IP LAN của máy chạy backend, " +
-        "vd: EXPO_PUBLIC_API_BASE_URL=http://192.168.1.10:8080"
+      "[env] EXPO_PUBLIC_API_BASE_URL chưa đặt trên thiết bị thật.\n" +
+        "  • Cùng WiFi: http://<IP-LAN>:8080  (npm run dev:api-url)\n" +
+        "  • Khác mạng: npm run tunnel:backend"
     );
   }
 
-  return "http://localhost:8080";
+  return fallback;
 }
 
 export const API_BASE_URL = resolveBaseUrl();
+
+export const ALCHEMY_API_KEY = process.env.EXPO_PUBLIC_ALCHEMY_API_KEY?.trim() ?? "";
+export const ETHERSCAN_API_KEY = process.env.EXPO_PUBLIC_ETHERSCAN_API_KEY?.trim() ?? "";
+export const WALLETCONNECT_PROJECT_ID = process.env.EXPO_PUBLIC_WC_PROJECT_ID?.trim() ?? "";
+
+/** In ra console lúc dev để debug kết nối backend. */
+export function logApiConfig() {
+  if (__DEV__) {
+    console.log(`[env] API_BASE_URL = ${API_BASE_URL}`);
+  }
+}

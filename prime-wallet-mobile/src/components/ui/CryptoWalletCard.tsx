@@ -3,7 +3,7 @@ import { Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert, Moda
 import * as Clipboard from "expo-clipboard";
 import { useNavigation } from "@react-navigation/native";
 import { ethers } from "ethers";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { savePrivateKey } from "../../storage/secureKeyStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "./Card";
 import { linkCryptoWallet, getLinkedWallets, getWalletBalance, CryptoWallet, WalletBalance } from "../../services/crypto";
@@ -30,7 +30,9 @@ export function CryptoWalletCard() {
       setLoading(true);
       setBalanceError(false);
       const wallets = await getLinkedWallets();
-      const sepoliaWallet = wallets.find((w) => w.blockchainNetwork === "ETH_SEPOLIA");
+      const sepoliaWallet = wallets.find(
+        (w) => w.blockchainNetwork === "ETH_SEPOLIA" || w.blockchainNetwork === "eth_sepolia",
+      );
       if (sepoliaWallet) {
         setWallet(sepoliaWallet);
         try {
@@ -58,13 +60,16 @@ export function CryptoWalletCard() {
       if (!phrase) throw new Error("Không thể tạo Seed Phrase");
       
       // Save Private Key locally (in a real app, encrypt this with user pin)
-      await AsyncStorage.setItem("crypto_private_key", newWallet.privateKey);
+      await savePrivateKey(newWallet.privateKey);
       
       // Show the seed phrase to the user
       setGeneratedSeedPhrase(phrase);
       
       // Link public address to backend
-      const linked = await linkCryptoWallet(newWallet.address);
+      const linked = await linkCryptoWallet({
+        walletAddress: newWallet.address,
+        blockchainNetwork: "eth_sepolia",
+      });
       setWallet(linked);
       
       // Fetch balance (will be 0)
@@ -94,9 +99,12 @@ export function CryptoWalletCard() {
       
       // Import from 12-word Seed Phrase
       const importedWallet = ethers.Wallet.fromPhrase(phrase);
-      await AsyncStorage.setItem("crypto_private_key", importedWallet.privateKey);
+      await savePrivateKey(importedWallet.privateKey);
       
-      const linked = await linkCryptoWallet(importedWallet.address);
+      const linked = await linkCryptoWallet({
+        walletAddress: importedWallet.address,
+        blockchainNetwork: "eth_sepolia",
+      });
       setWallet(linked);
       
       const balance = await getWalletBalance(linked.id);

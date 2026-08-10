@@ -1,29 +1,113 @@
 # Prime Wallet Mobile
 
-Frontend React Native cho Prime Wallet, scaffold bằng Expo, TypeScript và NativeWind.
+Frontend React Native (Expo) — đồng bộ UI với `prime-wallet-web`.
 
-## Mục tiêu giai đoạn đầu
+## Chạy nhanh
 
-- Dựng nền tảng đa nền tảng cho Android, iOS và Web.
-- Kết nối đúng hợp đồng API backend hiện có.
-- Giữ frontend tách biệt để không ảnh hưởng logic Spring Boot đang phát triển.
+```bash
+cd prime-wallet-mobile
+npm install
+npm run start
+```
 
-## Cấu trúc backend đã xác nhận
+Backend Spring Boot phải chạy trên port **8080**.
 
-- Auth: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/auth/profile`, `/api/v1/auth/change-password`
-- Wallet: `/api/v1/accounts`, `/api/v1/accounts/me`, `/api/v1/transactions/top-up`, `/api/v1/transactions/withdraw`, `/api/v1/transactions/transfer`, `/api/v1/transactions/history/{accountId}`
-- Admin: `/api/v1/admin/users`
+---
 
-## Lưu ý tích hợp
+## Kết nối backend từ điện thoại (tunnel)
 
-- Backend đang chạy `8080`.
-- Android emulator thường dùng `http://10.0.2.2:8080`.
-- iOS simulator có thể dùng `http://localhost:8080`.
-- Máy thật cần dùng IP LAN của máy dev.
-- Web build có thể cần backend bật CORS.
+Expo `--tunnel` chỉ tunnel **Metro bundler** (JS bundle), **không** tunnel backend API.
+Cần cấu hình riêng URL backend:
 
-## Chạy dự án
+### Cách 1 — Cùng WiFi (đơn giản nhất)
 
-1. Cài dependencies.
-2. Chạy `npm run start`.
-3. Chọn nền tảng `android`, `ios`, hoặc `web`.
+```bash
+npm run dev:api-url   # in IP LAN gợi ý
+```
+
+Tạo file `.env`:
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://192.168.1.10:8080
+```
+
+### Cách 2 — Android Emulator
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080
+```
+
+### Cách 3 — iOS Simulator
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://localhost:8080
+```
+
+### Cách 4 — Ngrok tunnel (điện thoại bất kỳ mạng / 4G)
+
+**Terminal 1** — backend:
+
+```bash
+cd .. && ./mvnw.cmd spring-boot:run
+```
+
+**Terminal 2** — mở tunnel API (tự ghi `.env`):
+
+```bash
+npm run tunnel:backend
+```
+
+**Terminal 3** — Expo tunnel (tải bundle qua internet):
+
+```bash
+npm run start:tunnel
+```
+
+Quét QR bằng Expo Go. App sẽ gọi backend qua URL ngrok trong `.env`.
+
+> Token ngrok (miễn phí): https://dashboard.ngrok.com → thêm `NGROK_AUTHTOKEN` vào `.env`
+
+---
+
+## Cấu trúc UI (đồng bộ web)
+
+| Web route | Mobile screen |
+|-----------|---------------|
+| `/wallet-type` | `WalletTypeScreen` |
+| `/fiat` | `FiatShellScreen` (3 tab) |
+| `/crypto` | `CryptoShellScreen` (9 tab — đang port) |
+| `/admin` | `AdminScreen` (đang port) |
+
+Design tokens: `src/theme/tokens.ts` (pink crypto / mint fiat — giống web `index.css`).
+
+---
+
+## Scripts
+
+| Lệnh | Mô tả |
+|------|--------|
+| `npm start` | Expo dev server |
+| `npm run start:tunnel` | Expo + tunnel bundle (Expo Go xa mạng) |
+| `npm run tunnel:backend` | Ngrok tunnel port 8080 → ghi `.env` |
+| `npm run dev:api-url` | In URL API theo platform |
+
+---
+
+## Lộ trình port từ web
+
+- [x] Design tokens + WalletLayout
+- [x] Wallet type picker + routing (lưu lựa chọn ví)
+- [x] Fiat shell — nạp VNPAY, chuyển tiền, hóa đơn, AI insights, profile edit
+- [x] Crypto 9 tab — Assets, Swap (LI.FI), Bridge, Gửi, Nhận, Lịch sử, NFT, Allowances, Ví
+- [x] Network switcher — 5 mạng EVM (in-app wallet)
+- [x] Admin dashboard
+- [x] VNPAY return deep link (`primewallet://vnpay-return`)
+- [ ] WalletConnect / ví ngoài (OKX, MetaMask) — web-only qua wagmi
+- [ ] Sepolia Uniswap V3 engine native (mobile dùng LI.FI; fallback web engine)
+
+### API keys (tùy chọn, `.env`)
+
+```
+EXPO_PUBLIC_ALCHEMY_API_KEY=...      # NFT gallery đầy đủ
+EXPO_PUBLIC_ETHERSCAN_API_KEY=...    # NFT fallback, allowance scan
+```

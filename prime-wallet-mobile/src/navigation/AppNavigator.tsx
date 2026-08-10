@@ -1,79 +1,85 @@
-import { NavigationContainer, DarkTheme } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme, type LinkingOptions } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { useAuth } from "../context/AuthContext";
 import { SplashScreen } from "../screens/SplashScreen";
+import { LandingScreen } from "../screens/LandingScreen";
 import { LoginScreen } from "../screens/LoginScreen";
 import { RegisterScreen } from "../screens/RegisterScreen";
-import { HomeScreen } from "../screens/HomeScreen";
+import { WalletTypeScreen } from "../screens/WalletTypeScreen";
+import { FiatShellScreen } from "../screens/FiatShellScreen";
+import { CryptoShellScreen } from "../screens/CryptoShellScreen";
+import { AdminScreen } from "../screens/AdminScreen";
 import { TransferScreen } from "../screens/TransferScreen";
-import { HistoryScreen } from "../screens/HistoryScreen";
-import { ProfileScreen } from "../screens/ProfileScreen";
+import { VnPayReturnScreen } from "../screens/VnPayReturnScreen";
+import type { RootStackParamList } from "./types";
 
-const Stack = createNativeStackNavigator();
-const Tab = createBottomTabNavigator();
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function AuthStack() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Landing">
+      <Stack.Screen name="Landing" component={LandingScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
     </Stack.Navigator>
   );
 }
 
-function MainTabs() {
-  return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarStyle: {
-          backgroundColor: "#08111f",
-          borderTopColor: "rgba(255,255,255,0.08)",
-        },
-        tabBarActiveTintColor: "#34d399",
-        tabBarInactiveTintColor: "#94a3b8",
-        tabBarIcon: ({ color, size }) => {
-          const icons: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
-            Home: "view-dashboard-outline",
-            Transfer: "swap-horizontal",
-            History: "history",
-            Profile: "account-circle-outline",
-          };
-
-          return <MaterialCommunityIcons name={icons[route.name]} size={size} color={color} />;
-        },
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Transfer" component={TransferScreen} />
-      <Tab.Screen name="History" component={HistoryScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
-    </Tab.Navigator>
-  );
+function resolveInitialRoute(
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>,
+  activeWalletMode: ReturnType<typeof useAuth>["activeWalletMode"],
+): keyof RootStackParamList {
+  if (session.auth.role === "ADMIN") return "Admin";
+  if (activeWalletMode === "fiat") return "Fiat";
+  if (activeWalletMode === "crypto") return "Crypto";
+  return "WalletType";
 }
 
+const linking: LinkingOptions<RootStackParamList> = {
+  prefixes: ["primewallet://"],
+  config: {
+    screens: {
+      VnPayReturn: "vnpay-return",
+    },
+  },
+};
+
 export function AppNavigator() {
-  const { loading, session } = useAuth();
+  const { loading, session, activeWalletMode } = useAuth();
+  const initialRoute = session ? resolveInitialRoute(session, activeWalletMode) : "Auth";
+  const navKey = `${loading}-${session?.auth.email ?? "guest"}-${activeWalletMode ?? "none"}`;
 
   return (
     <NavigationContainer
+      linking={linking}
       theme={{
         ...DarkTheme,
         colors: {
           ...DarkTheme.colors,
-          background: "#020617",
-          card: "#0f172a",
+          background: "#131313",
+          card: "#1b1b1b",
           border: "rgba(255,255,255,0.08)",
-          primary: "#34d399",
-          text: "#f8fafc",
+          primary: "#fc72ff",
+          text: "#ffffff",
         },
       }}
     >
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {loading ? <Stack.Screen name="Splash" component={SplashScreen} /> : session ? <Stack.Screen name="Main" component={MainTabs} /> : <Stack.Screen name="Auth" component={AuthStack} />}
+      <Stack.Navigator key={navKey} screenOptions={{ headerShown: false }} initialRouteName={loading ? "Splash" : initialRoute}>
+        {loading ? (
+          <Stack.Screen name="Splash" component={SplashScreen} />
+        ) : session ? (
+          <>
+            <Stack.Screen name="WalletType" component={WalletTypeScreen} options={{ animation: "fade" }} />
+            <Stack.Screen name="Fiat" component={FiatShellScreen} />
+            <Stack.Screen name="Crypto" component={CryptoShellScreen} />
+            <Stack.Screen name="Admin" component={AdminScreen} />
+            <Stack.Screen name="VnPayReturn" component={VnPayReturnScreen} />
+            <Stack.Screen name="Transfer" component={TransferScreen} options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+          </>
+        ) : (
+          <Stack.Screen name="Auth" component={AuthStack} />
+        )}
       </Stack.Navigator>
     </NavigationContainer>
   );

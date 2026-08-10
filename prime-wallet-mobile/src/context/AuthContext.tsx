@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { changePassword, getProfile, login, register, updateProfile as updateProfileRequest } from "../services/auth";
 import { setOnAuthFailure } from "../services/http";
 import { getMyAccount } from "../services/wallet";
 import { clearTokens, getRole, getTokens, saveRole, saveTokens } from "../storage/tokenStore";
+import { loadWalletMode, saveWalletMode } from "../storage/walletModeStore";
 import type { AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest, SessionState, UpdateProfileRequest } from "../types/api";
 
 type AuthContextValue = {
@@ -16,7 +17,7 @@ type AuthContextValue = {
   updateProfile: (payload: UpdateProfileRequest) => Promise<void>;
   changePassword: (payload: ChangePasswordRequest) => Promise<void>;
   activeWalletMode: "fiat" | "crypto" | null;
-  setActiveWalletMode: (mode: "fiat" | "crypto" | null) => void;
+  setActiveWalletMode: (mode: "fiat" | "crypto" | null) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -68,9 +69,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
+      const savedMode = await loadWalletMode();
+      if (savedMode) setActiveWalletMode(savedMode);
       await reloadSession();
       setLoading(false);
     })();
+  }, []);
+
+  const setActiveWalletModePersist = useCallback(async (mode: "fiat" | "crypto" | null) => {
+    setActiveWalletMode(mode);
+    await saveWalletMode(mode);
   }, []);
 
   const signIn = async (payload: LoginRequest) => {
@@ -94,6 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearTokens();
     setSession(null);
     setActiveWalletMode(null);
+    await saveWalletMode(null);
   };
 
   const updateProfile = async (payload: UpdateProfileRequest) => {
@@ -116,9 +125,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       updateProfile,
       changePassword: updatePassword,
       activeWalletMode,
-      setActiveWalletMode,
+      setActiveWalletMode: setActiveWalletModePersist,
     }),
-    [loading, session, activeWalletMode]
+    [loading, session, activeWalletMode, setActiveWalletModePersist]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

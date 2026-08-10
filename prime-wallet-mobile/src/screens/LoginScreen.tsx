@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { Alert, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
+import { AuthLayout } from "../components/auth/AuthLayout";
 import { Button } from "../components/ui/Button";
-import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
-import { Screen } from "../components/ui/Screen";
 import { useAuth } from "../context/AuthContext";
+import type { RootStackParamList } from "../navigation/types";
 
-export function LoginScreen({ navigation }: any) {
+type Props = NativeStackScreenProps<RootStackParamList, "Login">;
+
+export function LoginScreen({ navigation }: Props) {
   const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,24 +28,23 @@ export function LoginScreen({ navigation }: any) {
   };
 
   return (
-    <Screen>
-      <View className="flex-1 justify-center gap-6 py-8">
-        <View>
-          <Text className="text-sm uppercase tracking-[0.35em] text-emerald-300">Prime Wallet</Text>
-          <Text className="mt-2 text-4xl font-black text-white">Quản lý ví, gọn và nhanh</Text>
-          <Text className="mt-3 text-base leading-6 text-slate-300">Đăng nhập để truy cập số dư, lịch sử giao dịch và chuyển tiền đa nền tảng.</Text>
-        </View>
-
-        <Card className="gap-4">
-          <Input label="Email" value={email} onChangeText={setEmail} placeholder="user@example.com" keyboardType="email-address" />
-          <Input label="Mật khẩu" value={password} onChangeText={setPassword} placeholder="••••••••" secureTextEntry />
-          <Button title="Đăng nhập" onPress={handleSubmit} loading={loading} />
-        </Card>
-
-        <TouchableOpacity onPress={() => navigation.navigate("Register")}> 
-          <Text className="text-center text-slate-300">Chưa có tài khoản? <Text className="font-semibold text-emerald-300">Đăng ký ngay</Text></Text>
-        </TouchableOpacity>
+    <AuthLayout
+      title="Đăng nhập"
+      description="Truy cập ví Fiat & Crypto đã liên kết."
+      tagline="Ví đa tài sản — Fiat & Crypto trong một app"
+      footer={
+        <Pressable onPress={() => navigation.navigate("Register")} className="items-center py-2">
+          <Text className="text-muted-foreground">
+            Chưa có tài khoản? <Text className="font-bold text-primary">Đăng ký</Text>
+          </Text>
+        </Pressable>
+      }
+    >
+      <View className="gap-4">
+        <Input label="Email" value={email} onChangeText={setEmail} placeholder="user@example.com" keyboardType="email-address" />
+        <Input label="Mật khẩu" value={password} onChangeText={setPassword} placeholder="••••••••" secureTextEntry />
+        <Button title="Đăng nhập" onPress={() => void handleSubmit()} loading={loading} />
       </View>
-    </Screen>
+    </AuthLayout>
   );
 }

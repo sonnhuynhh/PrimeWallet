@@ -1,31 +1,74 @@
-import { Text, TextInput, View } from "react-native";
+import type { ReactNode } from "react";
+import { Text, TextInput, View, type KeyboardTypeOptions } from "react-native";
+
+import { colors } from "../../theme/tokens";
+import { useShell } from "../../context/ShellContext";
+import { shellTheme } from "../../theme/tokens";
 
 type InputProps = {
-  label: string;
+  label?: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
   secureTextEntry?: boolean;
-  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad";
+  keyboardType?: KeyboardTypeOptions;
   multiline?: boolean;
-  error?: string;
+  error?: string | null;
+  hint?: string;
+  suffix?: ReactNode;
+  prefix?: ReactNode;
+  editable?: boolean;
 };
 
-export function Input({ label, value, onChangeText, placeholder, secureTextEntry, keyboardType = "default", multiline, error }: InputProps) {
+export function Input({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  secureTextEntry,
+  keyboardType = "default",
+  multiline,
+  error,
+  hint,
+  suffix,
+  prefix,
+  editable = true,
+}: InputProps) {
+  const shell = useShell();
+  const theme = shellTheme[shell];
+
   return (
-    <View className="gap-2">
-      <Text className="text-sm font-medium text-slate-300">{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#64748b"
-        secureTextEntry={secureTextEntry}
-        keyboardType={keyboardType}
-        multiline={multiline}
-        className={`rounded-2xl border px-4 py-3 text-white ${multiline ? "min-h-[96px]" : ""} ${error ? "border-red-400/70 bg-red-500/10" : "border-white/10 bg-white/5"}`}
-      />
-      {error ? <Text className="text-xs text-red-300">{error}</Text> : null}
+    <View className="w-full gap-2">
+      {label ? (
+        <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{label}</Text>
+      ) : null}
+      <View
+        className="flex-row items-center rounded-2xl border"
+        style={{
+          backgroundColor: `${colors.surface2}e6`,
+          borderColor: error ? "rgba(251,113,133,0.7)" : colors.border,
+        }}
+      >
+        {prefix ? <View className="pl-4">{prefix}</View> : null}
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={`${colors.mutedForeground}88`}
+          secureTextEntry={secureTextEntry}
+          keyboardType={keyboardType}
+          multiline={multiline}
+          editable={editable}
+          className={`flex-1 p-4 text-white ${multiline ? "min-h-[96px]" : ""}`}
+          style={{ textAlignVertical: multiline ? "top" : "center" }}
+        />
+        {suffix ? <View className="pr-3">{suffix}</View> : null}
+      </View>
+      {error ? (
+        <Text className="text-xs text-rose-400">{error}</Text>
+      ) : hint ? (
+        <Text className="text-xs text-muted-foreground">{hint}</Text>
+      ) : null}
     </View>
   );
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Alert, Text, View, TouchableOpacity } from "react-native";
+import { Alert, Text, View, TouchableOpacity, ScrollView } from "react-native";
 import { ethers } from "ethers";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getPrivateKey } from "../storage/secureKeyStore";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 
@@ -14,9 +14,10 @@ import { transfer } from "../services/wallet";
 import { broadcastTransaction } from "../services/crypto";
 import { createIdempotencyKey } from "../utils/uuid";
 
-export function TransferScreen() {
+export function TransferScreen({ embedded }: { embedded?: boolean } = {}) {
   const { session, reloadSession, activeWalletMode } = useAuth();
   const navigation = useNavigation<any>();
+  const mode = embedded ? "crypto" : activeWalletMode;
 
   // Fiat States
   const [destinationAccountNumber, setDestinationAccountNumber] = useState("");
@@ -58,7 +59,7 @@ export function TransferScreen() {
       }
       setCryptoLoading(true);
 
-      const pk = await AsyncStorage.getItem("crypto_private_key");
+      const pk = await getPrivateKey();
       if (!pk) {
         Alert.alert("Lỗi", "Không tìm thấy Private Key. Vui lòng tạo ví Web3 bên màn hình Trang chủ.");
         return;
@@ -78,7 +79,7 @@ export function TransferScreen() {
       const signedTxHex = await wallet.signTransaction(populatedTx);
 
       // 3. Phát sóng qua Backend (Broadcast)
-      const res = await broadcastTransaction(signedTxHex);
+      const res = await broadcastTransaction(signedTxHex, "eth_sepolia");
 
       Alert.alert("Phát sóng thành công!", `TxHash: ${res.transactionHash}\nCó thể tốn vài giây để Etherscan xác nhận.`);
       setCryptoToAddress("");
@@ -91,7 +92,7 @@ export function TransferScreen() {
     }
   };
 
-  if (!activeWalletMode) {
+  if (!mode) {
     return (
       <Screen>
         <View className="flex-1 items-center justify-center gap-4 py-8">
@@ -106,18 +107,18 @@ export function TransferScreen() {
     );
   }
 
-  return (
-    <Screen>
-      <View className="flex-1 gap-4 py-4">
-        {/* Header */}
+  const body = (
+    <View className={`gap-4 ${embedded ? "px-4 py-4" : "py-4"}`}>
+      {!embedded ? (
         <View className="flex-row items-center justify-between">
           <View>
             <Text className="text-sm uppercase tracking-[0.3em] text-emerald-300">Transfer</Text>
             <Text className="mt-2 text-3xl font-black text-white">Chuyển tiền</Text>
           </View>
         </View>
+      ) : null}
 
-        {activeWalletMode === "fiat" && (
+      {mode === "fiat" && (
           <Card className="gap-4 border border-emerald-500/20">
             <Input label="Số tài khoản nhận (PrimeWallet)" value={destinationAccountNumber} onChangeText={setDestinationAccountNumber} placeholder="PW00001234" />
             <Input label="Số tiền VND" value={amount} onChangeText={setAmount} placeholder="100000" keyboardType="numeric" />
@@ -127,7 +128,7 @@ export function TransferScreen() {
           </Card>
         )}
 
-        {activeWalletMode === "crypto" && (
+        {mode === "crypto" && (
           <Card className="gap-4 border border-violet-500/20">
             <View className="bg-violet-500/10 p-3 rounded-xl border border-violet-500/30 mb-2">
                 <Text className="text-violet-300 text-xs text-center">Giao dịch được KÝ OFFLINE và hoàn toàn phi tập trung (Non-Custodial).</Text>
@@ -139,7 +140,9 @@ export function TransferScreen() {
             </TouchableOpacity>
           </Card>
         )}
-      </View>
-    </Screen>
+    </View>
   );
+
+  if (embedded) return <ScrollView className="flex-1">{body}</ScrollView>;
+  return <Screen>{body}</Screen>;
 }

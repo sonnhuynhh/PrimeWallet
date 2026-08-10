@@ -1,44 +1,69 @@
 import { useEffect, useState } from "react";
-import { Text, View, TouchableOpacity, Modal, TextInput, Alert, Linking, ActivityIndicator, AppState } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import {
+  Text,
+  View,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  Alert,
+  Linking,
+  ActivityIndicator,
+  AppState,
+  ScrollView,
+  Pressable,
+} from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { Card } from "../components/ui/Card";
-import { Screen } from "../components/ui/Screen";
-import { CryptoWalletCard } from "../components/ui/CryptoWalletCard";
+import { Modal as AppModal } from "../components/ui/Modal";
+import { Input } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
+import { AiInsightsPanel } from "../components/ai/AiInsightsPanel";
 import { useAuth } from "../context/AuthContext";
 import { createPaymentUrl } from "../services/payment";
+import { withdraw } from "../services/wallet";
+import { createIdempotencyKey } from "../utils/uuid";
+import { toastErr, toastOk } from "../components/feedback/toast";
+import { fmtVnd } from "../lib/utils";
+import { shellTheme } from "../theme/tokens";
+import type { RootStackParamList } from "../navigation/types";
+
+const BILL_PROVIDERS = ["Điện lực EVN", "Nước sạch Sawaco", "Internet VNPT", "Internet FPT"] as const;
 
 export function HomeScreen() {
-  const { session, activeWalletMode, setActiveWalletMode, reloadSession } = useAuth();
-  const navigation = useNavigation<any>();
+  const { session, reloadSession, setActiveWalletMode } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const theme = shellTheme.fiat;
   const [balance, setBalance] = useState(session?.account?.balance ?? "0");
-  
-  // VNPAY Modal state
   const [showDepositModal, setShowDepositModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showBillModal, setShowBillModal] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [depositLoading, setDepositLoading] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawDesc, setWithdrawDesc] = useState("");
+  const [withdrawLoading, setWithdrawLoading] = useState(false);
+  const [billProvider, setBillProvider] = useState<string>(BILL_PROVIDERS[0]);
+  const [billCode, setBillCode] = useState("");
+  const [billAmount, setBillAmount] = useState("");
+  const [billLoading, setBillLoading] = useState(false);
 
   useEffect(() => {
     setBalance(session?.account?.balance ?? "0");
   }, [session?.account?.balance]);
 
-  // Tự động tải lại số dư khi quay lại ứng dụng (từ trình duyệt VNPAY)
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", nextAppState => {
-      if (nextAppState === "active") {
-        reloadSession();
-      }
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") void reloadSession();
     });
-
-    return () => {
-      subscription.remove();
-    };
+    return () => subscription.remove();
   }, [reloadSession]);
 
   const handleDeposit = async () => {
-    const amountNum = parseInt(depositAmount.replace(/\D/g, ""));
-    if (isNaN(amountNum) || amountNum < 10000) {
+    const amountNum = parseInt(depositAmount.replace(/\D/g, ""), 10);
+    if (Number.isNaN(amountNum) || amountNum < 10000) {
       Alert.alert("Lỗi", "Số tiền nạp tối thiểu là 10,000đ");
       return;
     }
@@ -47,142 +72,156 @@ export function HomeScreen() {
       const res = await createPaymentUrl(amountNum, "Nap tien PrimeWallet");
       setShowDepositModal(false);
       setDepositAmount("");
-      if (res.paymentUrl) {
-        await Linking.openURL(res.paymentUrl);
-      }
-    } catch (e: any) {
-      Alert.alert("Lỗi nạp tiền", e.message || "Đã xảy ra lỗi");
+      if (res.paymentUrl) await Linking.openURL(res.paymentUrl);
+      toastOk("Đã mở VNPAY", "Hoàn tất thanh toán để cộng tiền vào ví.");
+    } catch (e) {
+      toastErr(e, "Lỗi nạp tiền");
     } finally {
       setDepositLoading(false);
     }
   };
 
-  const fullName = session?.profile.fullName ?? session?.auth.fullName ?? "Khách";
+  const handleWithdraw = async () => {
+    const amountNum = parseInt(withdrawAmount.replace(/\D/g, ""), 10);
+    if (Number.isNaN(amountNum) || amountNum < 10000) {
+      Alert.alert("Lỗi", "Số tiền rút tối thiểu là 10,000đ");
+      return;
+    }
+    setWithdrawLoading(true);
+    try {
+      await withdraw({
+        idempotencyKey: createIdempotencyKey(),
+        amount: String(amountNum),
+        description: withdrawDesc.trim() || "Rút tiền về ngân hàng",
+      });
+      await reloadSession();
+      toastOk("Yêu cầu rút tiền đã gửi", fmtVnd(amountNum));
+      setShowWithdrawModal(false);
+      setWithdrawAmount("");
+      setWithdrawDesc("");
+    } catch (e) {
+      toastErr(e, "Rút tiền thất bại");
+    } finally {
+      setWithdrawLoading(false);
+    }
+  };
 
-  // Màn hình 1: Chọn Ví (Wallet Selector)
-  if (!activeWalletMode) {
-    return (
-      <Screen>
-        <View className="flex-1 gap-6 py-8 justify-center">
-          <View className="items-center mb-4">
-            <Text className="text-sm uppercase tracking-[0.3em] text-emerald-300">Welcome back</Text>
-            <Text className="mt-2 text-3xl font-black text-white">Xin chào, {fullName}</Text>
-            <Text className="mt-2 text-slate-400 text-center px-4">
-              Bạn muốn sử dụng ví nào hôm nay?
-            </Text>
-          </View>
+  const handleBill = async () => {
+    if (!billCode || !billAmount) return;
+    setBillLoading(true);
+    try {
+      await withdraw({
+        idempotencyKey: createIdempotencyKey(),
+        amount: billAmount,
+        description: `Thanh toán hóa đơn ${billProvider} - Mã: ${billCode}`,
+      });
+      await reloadSession();
+      toastOk("Thanh toán hóa đơn thành công", `${billProvider} · ${fmtVnd(Number(billAmount))}`);
+      setShowBillModal(false);
+      setBillCode("");
+      setBillAmount("");
+    } catch (e) {
+      toastErr(e, "Thanh toán hóa đơn thất bại");
+    } finally {
+      setBillLoading(false);
+    }
+  };
 
-          <TouchableOpacity onPress={() => setActiveWalletMode("fiat")}>
-            <Card className="gap-3 bg-emerald-500/10 border border-emerald-500/30 items-center py-8 rounded-3xl">
-              <Ionicons name="wallet-outline" size={48} color="#34d399" />
-              <Text className="text-2xl font-black text-white">Ví Truyền Thống</Text>
-              <Text className="text-emerald-200">Giao dịch VND & Thẻ tín dụng ảo</Text>
-            </Card>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setActiveWalletMode("crypto")}>
-            <Card className="gap-3 bg-violet-500/10 border border-violet-500/30 items-center py-8 rounded-3xl">
-              <Ionicons name="planet-outline" size={48} color="#a78bfa" />
-              <Text className="text-2xl font-black text-white">Ví Web3</Text>
-              <Text className="text-violet-200">Tự quản lý tài sản Crypto (Non-custodial)</Text>
-            </Card>
-          </TouchableOpacity>
-        </View>
-      </Screen>
-    );
-  }
-
-  // Màn hình 2: Bảng Điều Khiển (Dashboard) của Ví đã chọn
   return (
-    <Screen>
-      <View className="flex-1 gap-4 py-4">
-        {/* Header với nút Đổi Ví */}
-        <View className="flex-row items-center justify-between">
-          <View>
-            <Text className="text-sm uppercase tracking-[0.3em] text-slate-400">Dashboard</Text>
-            <Text className="mt-2 text-2xl font-black text-white">
-              {activeWalletMode === "fiat" ? "Ví VND" : "Ví Crypto"}
-            </Text>
-          </View>
-          <TouchableOpacity 
-            onPress={() => setActiveWalletMode(null)}
-            className="bg-slate-800 px-4 py-2 rounded-full border border-slate-700 flex-row items-center gap-2"
-          >
-            <Ionicons name="swap-horizontal" size={16} color="#94a3b8" />
-            <Text className="text-slate-300 font-semibold">Đổi Ví</Text>
-          </TouchableOpacity>
-        </View>
+    <ScrollView className="flex-1 px-4 py-4" showsVerticalScrollIndicator={false}>
+      <Card className="mb-4 gap-3 border" style={{ backgroundColor: theme.primarySoft, borderColor: `${theme.primary}33` }}>
+        <Text className="text-sm font-semibold" style={{ color: theme.primary }}>Số dư khả dụng</Text>
+        <Text className="text-4xl font-extrabold text-white">
+          {fmtVnd(Number(balance))} <Text className="text-2xl" style={{ color: theme.primary }}>₫</Text>
+        </Text>
+        <Text className="text-sm text-muted-foreground">STK: {session?.account?.accountNumber ?? "—"}</Text>
+      </Card>
 
-        {/* Fiat Wallet Content */}
-        {activeWalletMode === "fiat" && (
-          <View className="gap-4 mt-2">
-            <Card className="gap-4 bg-emerald-400/10 border border-emerald-500/20">
-              <Text className="text-sm text-emerald-200">Số dư khả dụng (VND)</Text>
-              <Text className="text-4xl font-black text-white">
-                {Number(balance).toLocaleString("vi-VN")} <Text className="text-2xl text-emerald-400">₫</Text>
-              </Text>
-              <Text className="text-sm text-slate-300">Số tài khoản: {session?.account?.accountNumber ?? "Chưa có ví"}</Text>
-            </Card>
-
-            <View className="flex-row gap-3">
-              <Card className="flex-1 gap-2 border border-slate-700">
-                <Text className="text-xs uppercase tracking-[0.2em] text-slate-400">KYC</Text>
-                <Text className="text-lg font-semibold text-white">{session?.profile.kycStatus ?? "PENDING"}</Text>
-              </Card>
-              <Card className="flex-1 gap-2 border border-slate-700">
-                <Text className="text-xs uppercase tracking-[0.2em] text-slate-400">Trạng thái</Text>
-                <Text className="text-lg font-semibold text-emerald-400">{session?.profile.status ?? "ACTIVE"}</Text>
-              </Card>
-            </View>
-            <View className="flex-row gap-3 mt-2">
-              <TouchableOpacity onPress={() => setShowDepositModal(true)} className="flex-1 bg-emerald-500 p-4 rounded-xl items-center">
-                <Text className="text-emerald-950 font-bold text-lg">Nạp tiền</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate("Transfer")} className="flex-1 bg-slate-800 p-4 rounded-xl items-center border border-slate-700">
-                <Text className="text-emerald-400 font-bold text-lg">Chuyển tiền</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Modal Nạp Tiền VNPAY */}
-            <Modal visible={showDepositModal} transparent animationType="fade">
-              <View className="flex-1 bg-black/80 justify-center px-6">
-                <Card className="gap-4 border border-emerald-500/30">
-                  <Text className="text-xl font-bold text-white mb-2">Nạp tiền vào ví (VNPAY)</Text>
-                  
-                  <View className="gap-2">
-                    <Text className="text-slate-400">Số tiền (VND)</Text>
-                    <TextInput
-                      className="bg-slate-800 text-white p-4 rounded-xl border border-slate-600 text-lg"
-                      value={depositAmount}
-                      onChangeText={setDepositAmount}
-                      placeholder="Nhập số tiền..."
-                      placeholderTextColor="#64748b"
-                      keyboardType="numeric"
-                    />
-                  </View>
-                  
-                  <View className="flex-row gap-3 mt-4">
-                    <TouchableOpacity onPress={() => setShowDepositModal(false)} className="flex-1 py-3 items-center rounded-lg border border-slate-600">
-                      <Text className="text-slate-300 font-bold">Hủy</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={handleDeposit} disabled={depositLoading} className="flex-1 bg-emerald-500 py-3 items-center rounded-lg flex-row justify-center">
-                      {depositLoading && <ActivityIndicator color="#064e3b" size="small" style={{ marginRight: 8 }} />}
-                      <Text className="text-emerald-950 font-bold">Tiếp tục</Text>
-                    </TouchableOpacity>
-                  </View>
-                </Card>
-              </View>
-            </Modal>
-          </View>
-        )}
-
-        {/* Crypto Wallet Content */}
-        {activeWalletMode === "crypto" && (
-          <View className="mt-2">
-            <CryptoWalletCard />
-          </View>
-        )}
+      <View className="mb-4 flex-row gap-3">
+        <Card className="flex-1 gap-1 border border-border">
+          <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">KYC</Text>
+          <Text className="text-base font-bold text-white">{session?.profile.kycStatus ?? "PENDING"}</Text>
+        </Card>
+        <Card className="flex-1 gap-1 border border-border">
+          <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Trạng thái</Text>
+          <Text className="text-base font-bold" style={{ color: theme.primary }}>{session?.profile.status ?? "ACTIVE"}</Text>
+        </Card>
       </View>
-    </Screen>
+
+      <View className="mb-3 flex-row gap-2">
+        <ActionBtn theme={theme} icon="plus" label="Nạp" onPress={() => setShowDepositModal(true)} primary />
+        <ActionBtn theme={theme} icon="bank-transfer" label="Chuyển" onPress={() => navigation.navigate("Transfer")} />
+        <ActionBtn theme={theme} icon="cash-minus" label="Rút" onPress={() => setShowWithdrawModal(true)} />
+        <ActionBtn theme={theme} icon="receipt" label="Hóa đơn" onPress={() => setShowBillModal(true)} warning />
+      </View>
+
+      <Pressable
+        onPress={() => {
+          void setActiveWalletMode("crypto");
+          navigation.navigate("Crypto");
+        }}
+        className="mb-4 flex-row items-center justify-between rounded-2xl border border-primary/30 bg-primary/10 px-4 py-3"
+      >
+        <Text className="font-bold text-primary">Đổi Crypto → VND (Bridge)</Text>
+        <MaterialCommunityIcons name="chevron-right" size={20} color="#fc72ff" />
+      </Pressable>
+
+      <AiInsightsPanel />
+
+      <AppModal visible={showDepositModal} title="Nạp tiền (VNPAY)" onClose={() => setShowDepositModal(false)}>
+        <Input label="Số tiền (VND)" value={depositAmount} onChangeText={setDepositAmount} keyboardType="numeric" placeholder="Tối thiểu 10.000đ" />
+        <Button title="Tiếp tục" onPress={() => void handleDeposit()} loading={depositLoading} />
+      </AppModal>
+
+      <AppModal visible={showWithdrawModal} title="Rút tiền" onClose={() => setShowWithdrawModal(false)}>
+        <Input label="Số tiền (VND)" value={withdrawAmount} onChangeText={setWithdrawAmount} keyboardType="numeric" placeholder="Tối thiểu 10.000đ" />
+        <Input label="Ghi chú" value={withdrawDesc} onChangeText={setWithdrawDesc} placeholder="Rút về ngân hàng liên kết" />
+        <Button title="Xác nhận rút" onPress={() => void handleWithdraw()} loading={withdrawLoading} />
+      </AppModal>
+
+      <AppModal visible={showBillModal} title="Thanh toán hóa đơn" onClose={() => setShowBillModal(false)}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3 flex-row gap-2">
+          {BILL_PROVIDERS.map((p) => (
+            <Pressable key={p} onPress={() => setBillProvider(p)} className="mr-2 rounded-full border border-border px-3 py-2" style={{ backgroundColor: billProvider === p ? theme.primarySoft : "transparent" }}>
+              <Text className="text-xs font-bold text-white">{p}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <Input label="Mã khách hàng" value={billCode} onChangeText={setBillCode} />
+        <Input label="Số tiền (VND)" value={billAmount} onChangeText={setBillAmount} keyboardType="numeric" />
+        <Button title="Thanh toán" onPress={() => void handleBill()} loading={billLoading} />
+      </AppModal>
+    </ScrollView>
+  );
+}
+
+function ActionBtn({
+  theme,
+  icon,
+  label,
+  onPress,
+  primary,
+  warning,
+}: {
+  theme: (typeof shellTheme)["fiat"];
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  label: string;
+  onPress: () => void;
+  primary?: boolean;
+  warning?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      className="flex-1 items-center justify-center gap-1 rounded-2xl py-3"
+      style={{
+        backgroundColor: primary ? theme.primary : warning ? "rgba(255,191,23,0.12)" : "rgba(255,255,255,0.03)",
+        borderWidth: primary ? 0 : 1,
+        borderColor: warning ? "rgba(255,191,23,0.3)" : "rgba(255,255,255,0.08)",
+      }}
+    >
+      <MaterialCommunityIcons name={icon} size={20} color={primary ? theme.primaryForeground : warning ? "#fbbf24" : theme.primary} />
+      <Text className="text-xs font-extrabold" style={{ color: primary ? theme.primaryForeground : warning ? "#fbbf24" : theme.primary }}>{label}</Text>
+    </TouchableOpacity>
   );
 }
