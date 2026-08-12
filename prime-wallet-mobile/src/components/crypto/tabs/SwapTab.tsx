@@ -1,14 +1,17 @@
 import { useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ethers } from "ethers";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { Button } from "../../ui/Button";
-import { Card } from "../../ui/Card";
+import { Card, CardHeader } from "../../ui/Card";
 import { Input } from "../../ui/Input";
 import { Badge } from "../../ui/Badge";
+import { EmptyState } from "../../ui/EmptyState";
+import { CryptoTabShell } from "../CryptoTabShell";
+import { TokenChipRow } from "../TokenChipRow";
 import { toastErr, toastOk } from "../../feedback/toast";
-import { clampDecimals, fmtNumber } from "../../../lib/utils";
+import { clampDecimals } from "../../../lib/utils";
 import { useSwapQuote } from "../../../hooks/useSwapQuote";
 import { useCrypto } from "../../../context/CryptoContext";
 import {
@@ -22,8 +25,10 @@ import {
   feeLabel,
   type DexToken,
 } from "../../../lib/dex";
+import { shellTheme } from "../../../theme/tokens";
 
 export function SwapTab() {
+  const theme = shellTheme.crypto;
   const { chainId, address, activeNetwork, signAndSend } = useCrypto();
   const tokens = useMemo<DexToken[]>(() => SEPOLIA_TOKENS, []);
   const [tokenIn, setTokenIn] = useState<DexToken>(tokens[0]);
@@ -54,6 +59,13 @@ export function SwapTab() {
   });
 
   const quote = quoteQuery.data;
+  const outAmount = quote ? ethers.formatUnits(quote.toAmount, quote.tokenOut.decimals) : "";
+
+  const flipTokens = () => {
+    setTokenIn(tokenOut);
+    setTokenOut(tokenIn);
+    setAmountText("");
+  };
 
   const handleSwap = async () => {
     if (!quote || !address || !chainId || !activeNetwork) return;
@@ -95,64 +107,83 @@ export function SwapTab() {
 
   if (!supported) {
     return (
-      <Card className="mx-4 my-4 items-center gap-2 py-8">
-        <MaterialCommunityIcons name="alert" size={32} color="#fbbf24" />
-        <Text className="text-center font-bold text-white">Mạng chưa hỗ trợ swap</Text>
-        <Text className="text-center text-sm text-muted-foreground">
-          Swap trên Sepolia hoặc Ethereum mainnet. Hiện tại: {activeNetwork?.label ?? activeNetwork?.name ?? "—"}
-        </Text>
-      </Card>
+      <CryptoTabShell>
+        <EmptyState
+          icon="alert-circle-outline"
+          title="Mạng chưa hỗ trợ swap"
+          description={`Swap trên Sepolia hoặc Ethereum mainnet. Hiện tại: ${activeNetwork?.label ?? activeNetwork?.name ?? "—"}`}
+        />
+      </CryptoTabShell>
     );
   }
 
-  const outAmount = quote ? ethers.formatUnits(quote.toAmount, quote.tokenOut.decimals) : "";
-
   return (
-    <ScrollView className="flex-1 px-4 py-4" showsVerticalScrollIndicator={false}>
+    <CryptoTabShell>
       <Card className="gap-4">
-        <View className="flex-row items-center justify-between">
-          <Text className="text-lg font-extrabold text-white">Swap</Text>
-          {quote ? <Badge variant="primary">{quote.tool}</Badge> : null}
+        <CardHeader
+          title="Swap"
+          description="Uniswap V3 engine · Sepolia"
+          icon={<MaterialCommunityIcons name="swap-horizontal" size={20} color={theme.primary} />}
+          action={quote ? <Badge variant="primary">{quote.tool}</Badge> : null}
+        />
+
+        <View className="gap-2">
+          <Text className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Bán</Text>
+          <Input value={amountText} onChangeText={setAmountText} keyboardType="decimal-pad" placeholder="0.0" />
+          <TokenChipRow
+            items={tokens.map((t) => ({ id: t.symbol, label: t.symbol }))}
+            selectedId={tokenIn.symbol}
+            onSelect={(id) => {
+              const t = tokens.find((x) => x.symbol === id);
+              if (t && t.symbol !== tokenOut.symbol) setTokenIn(t);
+            }}
+          />
         </View>
 
-        <Input label={`Bán (${tokenIn.symbol})`} value={amountText} onChangeText={setAmountText} keyboardType="decimal-pad" />
-        <Input label={`Mua (${tokenOut.symbol})`} value={tokenOut.symbol} onChangeText={() => {}} />
-        <Text className="text-sm text-muted-foreground">
-          Nhận ≈ {quoteQuery.loading ? "…" : outAmount || "0"} {tokenOut.symbol}
-        </Text>
+        <Pressable onPress={flipTokens} className="self-center rounded-full border border-border bg-white/5 p-2">
+          <MaterialCommunityIcons name="swap-vertical" size={22} color={theme.primary} />
+        </Pressable>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row gap-2">
-          {SLIPPAGE_PRESETS_BPS.map((bps) => (
-            <Pressable
-              key={bps}
-              onPress={() => setSlippageBps(bps)}
-              className="mr-2 rounded-full border border-border px-3 py-1.5"
-              style={{ backgroundColor: slippageBps === bps ? "rgba(252,114,255,0.15)" : "transparent" }}
-            >
-              <Text className="text-xs font-bold text-white">{(bps / 100).toFixed(2)}%</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <View className="flex-row gap-2">
-          {tokens.map((t) => (
-            <Pressable key={t.symbol} onPress={() => setTokenIn(t)} className="rounded-full bg-white/5 px-2 py-1">
-              <Text className="text-xs text-primary">{t.symbol}</Text>
-            </Pressable>
-          ))}
-        </View>
-        <View className="flex-row gap-2">
-          {tokens.filter((t) => t.symbol !== tokenIn.symbol).map((t) => (
-            <Pressable key={t.symbol} onPress={() => setTokenOut(t)} className="rounded-full bg-white/5 px-2 py-1">
-              <Text className="text-xs text-muted-foreground">{t.symbol}</Text>
-            </Pressable>
-          ))}
+        <View className="gap-2">
+          <Text className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Mua (ước tính)</Text>
+          <View className="rounded-2xl border border-border bg-surface-2/90 p-4">
+            <Text className="text-2xl font-extrabold text-white">
+              {quoteQuery.loading ? "…" : outAmount || "0"} {tokenOut.symbol}
+            </Text>
+          </View>
+          <TokenChipRow
+            items={tokens.filter((t) => t.symbol !== tokenIn.symbol).map((t) => ({ id: t.symbol, label: t.symbol }))}
+            selectedId={tokenOut.symbol}
+            onSelect={(id) => {
+              const t = tokens.find((x) => x.symbol === id);
+              if (t) setTokenOut(t);
+            }}
+          />
         </View>
 
-        {quoteQuery.loading ? <ActivityIndicator color="#fc72ff" /> : null}
+        <View className="gap-2">
+          <Text className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Slippage</Text>
+          <View className="flex-row flex-wrap gap-2">
+            {SLIPPAGE_PRESETS_BPS.map((bps) => (
+              <Pressable
+                key={bps}
+                onPress={() => setSlippageBps(bps)}
+                className="rounded-full border px-3 py-1.5"
+                style={{
+                  backgroundColor: slippageBps === bps ? theme.primarySoft : "transparent",
+                  borderColor: slippageBps === bps ? `${theme.primary}55` : "rgba(255,255,255,0.08)",
+                }}
+              >
+                <Text className="text-xs font-bold text-white">{(bps / 100).toFixed(2)}%</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {quoteQuery.loading ? <ActivityIndicator color={theme.primary} /> : null}
 
         {quote ? (
-          <Card className="gap-2 border border-border bg-black/20">
+          <Card bare className="gap-2 border border-border bg-black/20 p-4">
             <Text className="text-xs font-bold uppercase text-muted-foreground">
               Route · {quote.route.source === "engine" ? "Uniswap V3" : "Aggregator"}
             </Text>
@@ -173,8 +204,8 @@ export function SwapTab() {
           </Card>
         ) : null}
 
-        <Button title="Swap" onPress={() => void handleSwap()} loading={submitting} />
+        <Button title="Swap" onPress={() => void handleSwap()} loading={submitting} disabled={!quote || amountIn === 0n} />
       </Card>
-    </ScrollView>
+    </CryptoTabShell>
   );
 }

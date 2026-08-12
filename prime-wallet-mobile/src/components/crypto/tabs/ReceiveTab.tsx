@@ -1,21 +1,22 @@
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import QRCode from "react-native-qrcode-svg";
 
 import { Card } from "../../ui/Card";
+import { CopyField } from "../../ui/CopyField";
+import { EmptyState } from "../../ui/EmptyState";
 import { toastOk } from "../../feedback/toast";
-import { shortAddress } from "../../../lib/utils";
 import { networkLabel } from "../../../lib/chains";
 import { useCrypto } from "../../../context/CryptoContext";
+import { shellTheme } from "../../../theme/tokens";
 
 export function ReceiveTab() {
   const { activeWallet } = useCrypto();
+  const theme = shellTheme.crypto;
 
   if (!activeWallet) {
     return (
-      <Card className="mx-4 my-4">
-        <Text className="text-center text-muted-foreground">Tạo hoặc liên kết ví để nhận crypto.</Text>
-      </Card>
+      <EmptyState icon="qrcode" title="Chưa có ví" description="Tạo hoặc liên kết ví để nhận crypto." />
     );
   }
 
@@ -26,18 +27,27 @@ export function ReceiveTab() {
 
   return (
     <View className="gap-4 px-4 py-4">
-      <Card className="items-center gap-4 py-8">
-        <MaterialCommunityIcons name="qrcode" size={80} color="#fc72ff" />
+      <Card className="gap-5 py-6">
+        <Text className="text-center text-lg font-bold text-white">Nhận crypto</Text>
         <Text className="text-center text-sm text-muted-foreground">
           Mạng: {networkLabel(activeWallet.blockchainNetwork)}
         </Text>
-        <Text className="text-center font-mono text-base text-white">{activeWallet.walletAddress}</Text>
-        <Pressable onPress={() => void copy()} className="flex-row items-center gap-2 rounded-full bg-primary/20 px-4 py-2">
-          <MaterialCommunityIcons name="content-copy" size={16} color="#fc72ff" />
-          <Text className="font-bold text-primary">Sao chép {shortAddress(activeWallet.walletAddress)}</Text>
-        </Pressable>
-        <Text className="text-center text-xs text-amber-400">
-          Chỉ gửi tài sản đúng mạng — gửi sai mạng có thể mất tiền.
+        <View className="items-center">
+          <View
+            className="items-center justify-center rounded-3xl border border-border p-5"
+            style={{ backgroundColor: "rgba(255,255,255,0.03)" }}
+          >
+            <QRCode
+              value={activeWallet.walletAddress}
+              size={200}
+              color={theme.primary}
+              backgroundColor="transparent"
+            />
+          </View>
+        </View>
+        <CopyField value={activeWallet.walletAddress} onCopy={() => void copy()} />
+        <Text className="text-center text-xs leading-5 text-amber-400">
+          Chỉ gửi tài sản đúng mạng — gửi sai mạng có thể mất tiền vĩnh viễn.
         </Text>
       </Card>
     </View>

@@ -22,6 +22,7 @@ export function NftTab() {
       fetchNfts({
         networkId: activeWallet!.blockchainNetwork,
         owner: address!,
+        walletId: activeWallet!.id,
         alchemyApiKey: alchemyApiKey(),
         etherscanApiKey: etherscanApiKey(),
       }),

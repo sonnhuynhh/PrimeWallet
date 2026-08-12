@@ -1,0 +1,122 @@
+@startuml Hinh_2_10_ERD_Database
+title Hình 2.10 – ERD: Các thực thể chính trong PostgreSQL
+skinparam linetype ortho
+
+entity "users" as users {
+  * id : UUID <<PK>>
+  --
+  * email : VARCHAR <<UNIQUE>>
+  * phone : VARCHAR <<UNIQUE>>
+  * password_hash : VARCHAR
+  * full_name : VARCHAR
+  date_of_birth : DATE
+  kyc_status : ENUM
+  role : ENUM
+  status : VARCHAR
+  created_at : TIMESTAMP
+  updated_at : TIMESTAMP
+}
+
+entity "refresh_tokens" as tokens {
+  * id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  * token : VARCHAR
+  expires_at : TIMESTAMP
+}
+
+entity "accounts" as accounts {
+  * id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  * account_number : VARCHAR <<UNIQUE>>
+  * currency : VARCHAR
+  * balance : NUMERIC(20,4)
+  status : ENUM
+  created_at : TIMESTAMP
+}
+
+entity "transactions" as transactions {
+  * id : UUID <<PK>>
+  --
+  * idempotency_key : UUID <<UNIQUE>>
+  * reference_number : VARCHAR <<UNIQUE>>
+  transaction_type : ENUM
+  source_account_id : UUID <<FK>>
+  destination_account_id : UUID <<FK>>
+  * amount : NUMERIC
+  fee : NUMERIC
+  status : ENUM
+  description : VARCHAR
+  created_at : TIMESTAMP
+}
+
+entity "ledger_entries" as ledger {
+  * id : UUID <<PK>>
+  --
+  * transaction_id : UUID <<FK>>
+  * account_id : UUID <<FK>>
+  entry_type : ENUM
+  * amount : NUMERIC
+  balance_after : NUMERIC
+  created_at : TIMESTAMP
+}
+
+entity "payment_orders" as payments {
+  * id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  * amount : NUMERIC
+  vnp_txn_ref : VARCHAR
+  status : ENUM
+  created_at : TIMESTAMP
+}
+
+entity "crypto_wallets" as cwallets {
+  * id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  * address : VARCHAR
+  network : VARCHAR
+  label : VARCHAR
+  is_primary : BOOLEAN
+}
+
+entity "crypto_transactions" as ctx {
+  * id : UUID <<PK>>
+  --
+  * wallet_id : UUID <<FK>>
+  tx_hash : VARCHAR
+  tx_type : ENUM
+  amount : VARCHAR
+  token_symbol : VARCHAR
+  status : ENUM
+  created_at : TIMESTAMP
+}
+
+entity "audit_logs" as audit {
+  * id : UUID <<PK>>
+  --
+  admin_id : UUID <<FK>>
+  action : VARCHAR
+  target_type : VARCHAR
+  target_id : UUID
+  details : TEXT
+  created_at : TIMESTAMP
+}
+
+users ||--o{ tokens : "1:N"
+users ||--o{ accounts : "1:N"
+users ||--o{ payments : "1:N"
+users ||--o{ cwallets : "1:N"
+
+accounts ||--o{ transactions : "source"
+accounts ||--o{ transactions : "destination"
+transactions ||--o{ ledger : "1:N"
+accounts ||--o{ ledger : "1:N"
+
+cwallets ||--o{ ctx : "1:N"
+
+users ||--o{ audit : "admin"
+
+@enduml

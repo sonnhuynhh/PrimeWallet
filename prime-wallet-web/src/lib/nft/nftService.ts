@@ -1,15 +1,19 @@
 import { getAddress, type Address } from 'viem';
 import { getPublicClient } from '@/lib/wagmi/clients';
 import { fetchEtherscanV2 } from '@/lib/etherscan/v2';
-import type { NetworkId } from '@/lib/wagmi/chains';
+import { formatExplorerError } from '@/lib/etherscan/errors';
+import { normalizeNetworkId, type NetworkId } from '@/lib/wagmi/chains';
+import { getWalletNftTransfers } from '@/services/crypto';
+import { HttpError } from '@/services/http';
+import type { NftTransferRecord } from '@/types/crypto';
 
 /**
  * Danh sách NFT của một ví.
  *
  * Nguồn dữ liệu (theo thứ tự ưu tiên):
- * 1. **Alchemy NFT v3** — ảnh + tên + collection đầy đủ. Cần `VITE_ALCHEMY_API_KEY`.
- * 2. **Etherscan V2 `tokennfttx`** — liệt kê NFT đang giữ (một key cho mọi mạng, cần `VITE_ETHERSCAN_API_KEY`).
- * 3. **On-chain `tokenURI`** — đọc metadata JSON từ contract (miễn phí, bổ sung ảnh/tên).
+ * 1. **Alchemy NFT v3** — ảnh + tên + collection đầy đủ (`VITE_ALCHEMY_API_KEY`).
+ * 2. **Backend / Etherscan `tokennfttx`** — fallback liệt kê NFT (không có metadata đầy đủ).
+ * 3. **On-chain `tokenURI`** — bổ sung ảnh/tên khi dùng nguồn Etherscan.
  */
 
 export interface NftItem {
@@ -41,6 +45,7 @@ const METADATA_ENRICH_LIMIT = 50;
 const ALCHEMY_NETWORK: Partial<Record<NetworkId, string>> = {
   eth_mainnet: 'eth-mainnet',
   eth_sepolia: 'eth-sepolia',
+  bsc_mainnet: 'bnb-mainnet',
   polygon_mainnet: 'polygon-mainnet',
   base_mainnet: 'base-mainnet',
 };
@@ -150,7 +155,7 @@ async function fetchFromAlchemy(
   owner: Address,
   apiKey: string,
 ): Promise<NftResult> {
-  const network = ALCHEMY_NETWORK[networkId as NetworkId];
+  const network = ALCHEMY_NETWORK[normalizeNetworkId(networkId)];
   if (!network) {
     return { kind: 'unavailable', reason: 'Alchemy không hỗ trợ NFT trên mạng này.' };
   }
@@ -199,6 +204,100 @@ interface EtherscanNftTx {
   to: string;
 }
 
+function isNoNftTransfersMessage(message?: string): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('no transactions') ||
+    lower.includes('no record found') ||
+    lower.includes('no tx found')
+  );
+}
+
+function buildHeldNftsFromTransfers(
+  transfers: EtherscanNftTx[],
+  owner: Address,
+): { items: NftItem[]; truncated: boolean } {
+  const held = new Map<string, NftItem>();
+  const target = getAddress(owner);
+
+  for (const tx of transfers) {
+    const key = `${tx.contractAddress.toLowerCase()}:${tx.tokenID}`;
+    const receivedByOwner = getAddress(tx.to) === target;
+
+    if (receivedByOwner) {
+      held.set(key, {
+        contract: getAddress(tx.contractAddress) as Address,
+        tokenId: tx.tokenID,
+        name: tx.tokenName ? `${tx.tokenName} #${tx.tokenID}` : null,
+        collection: tx.tokenName ?? tx.tokenSymbol ?? null,
+        imageUrl: null,
+        tokenType: 'ERC721',
+        balance: '1',
+      });
+    } else if (getAddress(tx.from) === target) {
+      held.delete(key);
+    }
+  }
+
+  return {
+    items: [...held.values()],
+    truncated: transfers.length >= 1000,
+  };
+}
+
+function transfersFromBackend(records: NftTransferRecord[]): EtherscanNftTx[] {
+  return records.map((record) => ({
+    contractAddress: record.contractAddress,
+    tokenID: record.tokenID,
+    tokenName: record.tokenName,
+    tokenSymbol: record.tokenSymbol,
+    from: record.from,
+    to: record.to,
+  }));
+}
+
+function explorerErrorDetail(body: { status: string; message?: string; result?: unknown }): string {
+  if (typeof body.result === 'string' && body.result.trim()) return body.result;
+  if (typeof body.message === 'string' && body.message.trim()) return body.message;
+  return '';
+}
+
+async function fetchFromBackend(walletId: string, owner: Address): Promise<NftResult | null> {
+  try {
+    const body = await getWalletNftTransfers(walletId);
+    if (body.status !== '1' || !Array.isArray(body.result)) {
+      const detail = explorerErrorDetail(body);
+      if (isNoNftTransfersMessage(detail)) {
+        return { kind: 'ok', items: [], source: 'etherscan', truncated: false };
+      }
+      return {
+        kind: 'unavailable',
+        reason: formatExplorerError(
+          detail || 'Explorer từ chối yêu cầu — kiểm tra etherscan.api-key trên backend',
+        ),
+      };
+    }
+
+    const { items, truncated } = buildHeldNftsFromTransfers(
+      transfersFromBackend(body.result),
+      owner,
+    );
+    return { kind: 'ok', items, source: 'etherscan', truncated };
+  } catch (error) {
+    if (error instanceof HttpError) {
+      if (error.status === 404) {
+        return {
+          kind: 'unavailable',
+          reason: 'Backend chưa có API NFT — restart Spring Boot để tải endpoint /nfts.',
+        };
+      }
+      return { kind: 'unavailable', reason: error.message };
+    }
+    return null;
+  }
+}
+
 /**
  * Dựng lại quyền sở hữu từ lịch sử chuyển nhượng ERC-721.
  * Duyệt theo thứ tự thời gian: nhận vào thì thêm, chuyển đi thì bỏ.
@@ -223,54 +322,47 @@ async function fetchFromEtherscan(
     apiKey,
   );
   if (!body) {
-    return { kind: 'unavailable', reason: 'Không gọi được Etherscan để dựng danh sách NFT.' };
+    return {
+      kind: 'unavailable',
+      reason:
+        'Không kết nối được explorer — thêm VITE_ETHERSCAN_API_KEY vào .env.local hoặc cấu hình etherscan.api-key trên backend.',
+    };
   }
 
   if (body.status !== '1' || !Array.isArray(body.result)) {
-    // status "0" với result rỗng nghĩa là không có giao dịch NFT nào — không phải lỗi.
-    return { kind: 'ok', items: [], source: 'etherscan', truncated: false };
-  }
-
-  const held = new Map<string, NftItem>();
-  const target = getAddress(owner);
-
-  for (const tx of body.result) {
-    const key = `${tx.contractAddress.toLowerCase()}:${tx.tokenID}`;
-    const receivedByOwner = getAddress(tx.to) === target;
-
-    if (receivedByOwner) {
-      held.set(key, {
-        contract: getAddress(tx.contractAddress) as Address,
-        tokenId: tx.tokenID,
-        name: tx.tokenName ? `${tx.tokenName} #${tx.tokenID}` : null,
-        collection: tx.tokenName ?? tx.tokenSymbol ?? null,
-        imageUrl: null,
-        tokenType: 'ERC721',
-        balance: '1',
-      });
-    } else if (getAddress(tx.from) === target) {
-      held.delete(key);
+    const detail = typeof body.result === 'string' ? body.result : body.message;
+    if (isNoNftTransfersMessage(detail) || isNoNftTransfersMessage(body.message)) {
+      return { kind: 'ok', items: [], source: 'etherscan', truncated: false };
     }
+    return { kind: 'unavailable', reason: formatExplorerError(detail) };
   }
 
-  return {
-    kind: 'ok',
-    items: [...held.values()],
-    source: 'etherscan',
-    truncated: body.result.length >= 1000,
-  };
+  const { items, truncated } = buildHeldNftsFromTransfers(body.result, owner);
+  return { kind: 'ok', items, source: 'etherscan', truncated };
 }
 
 export async function fetchNfts(params: {
   networkId: string;
   owner: Address;
+  walletId?: string;
   alchemyApiKey?: string;
   etherscanApiKey?: string;
 }): Promise<NftResult> {
   try {
     if (params.alchemyApiKey) {
-      const result = await fetchFromAlchemy(params.networkId, params.owner, params.alchemyApiKey);
-      if (result.kind === 'ok') return result;
+      const alchemy = await fetchFromAlchemy(params.networkId, params.owner, params.alchemyApiKey);
+      if (alchemy.kind === 'ok') return alchemy;
+    }
+
+    if (params.walletId) {
+      const backend = await fetchFromBackend(params.walletId, params.owner);
+      if (backend?.kind === 'ok') {
+        const items = await enrichNftMetadata(params.networkId, backend.items);
+        return { ...backend, items };
+      }
+      if (backend?.kind === 'unavailable' && !params.etherscanApiKey) {
+        return backend;
+      }
     }
 
     const etherscanResult = await fetchFromEtherscan(

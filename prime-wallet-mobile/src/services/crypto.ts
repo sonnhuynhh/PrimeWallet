@@ -49,6 +49,21 @@ export type EtherscanResponse = {
   result: EtherscanTransaction[];
 };
 
+export type NftTransferRecord = {
+  contractAddress: string;
+  tokenID: string;
+  tokenName?: string;
+  tokenSymbol?: string;
+  from: string;
+  to: string;
+};
+
+export type NftTransfersResponse = {
+  status: string;
+  message: string;
+  result: NftTransferRecord[];
+};
+
 export function getSupportedNetworks() {
   return request<NetworkInfo[]>("/api/v1/crypto/wallets/networks");
 }
@@ -102,6 +117,10 @@ export function broadcastTransaction(signedTransactionHex: string, blockchainNet
 
 export function getWalletHistory(walletId: string) {
   return request<EtherscanResponse>(`/api/v1/crypto/wallets/${walletId}/history`);
+}
+
+export function getWalletNftTransfers(walletId: string) {
+  return request<NftTransfersResponse>(`/api/v1/crypto/wallets/${walletId}/nfts`);
 }
 
 export function createOwnershipChallenge(address: string) {

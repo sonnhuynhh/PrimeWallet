@@ -1,0 +1,41 @@
+@startuml Hinh_2_12_Sequence_Double_Entry_Ledger
+title Hình 2.12 – Sequence: Chuyển khoản nội bộ & Sổ cái kép (Double-Entry)
+skinparam sequenceMessageAlign center
+
+actor "Người dùng A" as UserA
+participant "TransactionController" as Ctrl
+participant "TransactionService" as TxSvc
+participant "LedgerService" as Ledger
+database "PostgreSQL" as DB
+
+UserA -> Ctrl : POST /transactions/transfer\n{destAccountNumber, amount, idempotencyKey}
+Ctrl -> TxSvc : transfer(request, userAId)
+
+TxSvc -> DB : findByIdempotencyKey\n(tránh trùng lặp)
+TxSvc -> DB : Tìm Account nguồn & đích
+TxSvc -> TxSvc : Kiểm tra balance >= amount\n+ KYC + status ACTIVE
+
+TxSvc -> DB : **BEGIN TRANSACTION**
+
+TxSvc -> DB : INSERT Transaction\n(type=TRANSFER, status=SUCCESS)
+
+TxSvc -> Ledger : createEntry(DEBIT, source, amount)
+Ledger -> DB : UPDATE accounts SET balance -= amount\nINSERT ledger_entries (DEBIT)
+Ledger -> DB : CHECK balance >= 0
+
+TxSvc -> Ledger : createEntry(CREDIT, dest, amount)
+Ledger -> DB : UPDATE accounts SET balance += amount\nINSERT ledger_entries (CREDIT)
+
+TxSvc -> DB : **COMMIT**
+
+TxSvc -> TxSvc : publish Kafka event
+TxSvc --> Ctrl : TransactionResponse
+Ctrl --> UserA : referenceNumber + số dư mới
+
+note over Ledger, DB
+  Mỗi TRANSFER tạo đúng 2 LedgerEntry:
+  DEBIT (nguồn) + CREDIT (đích)
+  Cùng transaction_id, atomic commit
+end note
+
+@enduml

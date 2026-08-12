@@ -4,6 +4,10 @@ module.exports = {
   presets: [require("nativewind/preset")],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["BeVietnamPro_400Regular"],
+        display: ["Syne_700Bold"],
+      },
       colors: {
         background: "#131313",
         foreground: "#ffffff",

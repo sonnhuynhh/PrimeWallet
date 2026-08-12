@@ -1,0 +1,39 @@
+@startuml Hinh_2_5_Sequence_Chuyen_Khoan_Fiat_Crypto
+title Hình 2.5 – Sequence: Chuyển khoản (Fiat và Crypto)
+skinparam sequenceMessageAlign center
+
+actor "Người dùng" as User
+participant "Web/Mobile" as UI
+participant "TransactionController\nCryptoTransactionController" as Ctrl
+participant "TransactionService" as FiatSvc
+participant "LedgerService" as Ledger
+database "PostgreSQL" as DB
+participant "RPC Node\n(Web3j)" as RPC
+queue "Kafka" as Kafka
+
+== Fiat – Chuyển tiền nội bộ ==
+User -> UI : Nhập số TK đích, số tiền, mô tả
+UI -> Ctrl : POST /api/v1/transactions/transfer\n(idempotencyKey, JWT)
+Ctrl -> FiatSvc : transfer(request, userId)
+FiatSvc -> FiatSvc : validateUserForTransaction\n(KYC >10M, LOCKED)
+FiatSvc -> DB : Kiểm tra idempotencyKey
+FiatSvc -> DB : BEGIN @Transactional
+FiatSvc -> Ledger : DEBIT source + CREDIT destination
+FiatSvc -> DB : Lưu Transaction (TRANSFER)
+FiatSvc -> DB : COMMIT
+FiatSvc -> Kafka : publish(TransactionEvent)
+FiatSvc --> Ctrl : TransactionResponse
+Ctrl --> UI : 200 OK
+UI --> User : Chuyển tiền thành công
+
+== Crypto – Gửi on-chain ==
+User -> UI : Ký giao dịch (MetaMask / ví in-app)
+UI -> Ctrl : POST /api/v1/crypto/transactions/broadcast\n(signedTxHex)
+Ctrl -> RPC : eth_sendRawTransaction
+RPC --> Ctrl : txHash
+Ctrl -> DB : Lưu CryptoTransaction
+Ctrl -> Kafka : publish(TransactionEvent CRYPTO_SEND)
+Ctrl --> UI : transactionHash
+UI --> User : Hiển thị hash + explorer link
+
+@enduml

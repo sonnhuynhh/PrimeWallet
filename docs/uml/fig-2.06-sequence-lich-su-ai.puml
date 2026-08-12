@@ -1,0 +1,41 @@
+@startuml Hinh_2_6_Sequence_Lich_Su_AI_Insights
+title Hình 2.6 – Sequence: Truy xuất Lịch sử và AI Insights
+skinparam sequenceMessageAlign center
+
+actor "Người dùng" as User
+participant "Web/Mobile" as UI
+participant "TransactionController\nAiInsightController" as Ctrl
+participant "TransactionService\nAiInsightService" as Svc
+database "PostgreSQL" as DB
+participant "FastAPI AI\n:8000" as AI
+database "SQLite ai.db" as AiDB
+
+== Lịch sử giao dịch Fiat ==
+User -> UI : Mở tab Lịch sử
+UI -> Ctrl : GET /api/v1/transactions/history/{accountId}
+Ctrl -> Svc : getTransactionHistory(accountId, userId)
+Svc -> DB : Kiểm tra quyền sở hữu Account
+Svc -> DB : findByAccountId (phân trang)
+Svc --> Ctrl : Page<TransactionResponse>
+Ctrl --> UI : Danh sách giao dịch
+UI --> User : Hiển thị lịch sử
+
+== AI Insights ==
+User -> UI : Mở panel AI Insights
+UI -> Ctrl : GET /api/v1/ai/insights\nGET /api/v1/ai/risk-score
+Ctrl -> Svc : getInsights(userId)\ngetRiskScore(userId)
+Svc -> Svc : ensureUserSynced()\n(đồng bộ nếu AI chưa có data)
+Svc -> AI : GET /api/ai/users/{id}/insights\nGET /api/ai/users/{id}/risk-score
+AI -> AiDB : Đọc giao dịch user
+AI -> AI : SpendingAnalyzer / FraudDetector
+AI --> Svc : JSON insights + risk score
+Svc --> Ctrl : Map kết quả (+ available flag)
+Ctrl --> UI : ApiResponse
+UI --> User : Điểm rủi ro + gợi ý chi tiêu
+
+note over AI, AiDB
+  Dữ liệu AI nhận qua Kafka (wallet.transactions)
+  hoặc sync từ backend khi thiếu
+end note
+
+@enduml

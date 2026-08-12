@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 
-import { chainIdOf, normalizeNetworkId, rpcOf } from "../lib/chains";
+import { chainIdOf, nativeSymbolOf, normalizeNetworkId, rpcOf } from "../lib/chains";
 import { getPrivateKey, savePrivateKey } from "../storage/secureKeyStore";
 import {
   getLinkedWallets,
@@ -43,9 +43,16 @@ export function useCryptoWallet() {
   const chainId = activeNetwork?.chainId ?? (activeWallet ? chainIdOf(activeWallet.blockchainNetwork) : undefined);
   const address = activeWallet?.walletAddress;
 
-  const buildTokenRows = (bal: WalletBalance | null, tokens: Awaited<ReturnType<typeof getWalletSupportedTokens>>) => {
+  const buildTokenRows = (
+    bal: WalletBalance | null,
+    tokens: Awaited<ReturnType<typeof getWalletSupportedTokens>>,
+    networkId: string,
+    networkInfo: NetworkInfo | null,
+  ) => {
+    const nativeSymbol =
+      networkInfo?.nativeSymbol ?? nativeSymbolOf(networkId) ?? bal?.nativeSymbol ?? "ETH";
     const native: TokenBalance = {
-      symbol: bal?.nativeSymbol ?? activeNetwork?.nativeSymbol ?? "ETH",
+      symbol: nativeSymbol,
       name: "Native",
       decimals: 18,
       balance: String(bal?.balanceEth ?? "0"),
@@ -61,16 +68,18 @@ export function useCryptoWallet() {
     return [native, ...erc20.filter((t) => !t.isNative)];
   };
 
-  const refreshWalletData = async (wallet: CryptoWallet) => {
+  const refreshWalletData = async (wallet: CryptoWallet, nets = networks) => {
     setRefreshing(true);
     setError(null);
     try {
+      const netId = normalizeNetworkId(wallet.blockchainNetwork);
+      const networkInfo = nets.find((n) => normalizeNetworkId(n.id) === netId) ?? null;
       const [bal, toks] = await Promise.all([
         getWalletBalance(wallet.id),
         getWalletSupportedTokens(wallet.id).catch(() => []),
       ]);
-      setBalance(bal);
-      setTokenRows(buildTokenRows(bal, toks));
+      setBalance({ ...bal, nativeSymbol: networkInfo?.nativeSymbol ?? nativeSymbolOf(netId) });
+      setTokenRows(buildTokenRows(bal, toks, netId, networkInfo));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được số dư");
     } finally {
@@ -89,7 +98,7 @@ export function useCryptoWallet() {
       const savedId = await AsyncStorage.getItem(ACTIVE_WALLET_KEY);
       const active = linked.find((w) => w.id === savedId) ?? linked[0] ?? null;
       setActiveWallet(active);
-      if (active) await refreshWalletData(active);
+      if (active) await refreshWalletData(active, nets);
       else {
         setBalance(null);
         setTokenRows([]);

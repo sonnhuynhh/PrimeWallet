@@ -140,6 +140,19 @@ def count_transactions(user_id: str = None) -> int:
         return conn.execute("SELECT COUNT(*) FROM ai_transactions").fetchone()[0]
 
 
+def list_user_ids() -> list[str]:
+    """Danh sách user_id đã có giao dịch trong AI store."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT user_id FROM ai_transactions
+            WHERE user_id IS NOT NULL AND user_id != ''
+            ORDER BY user_id
+            """
+        ).fetchall()
+    return [str(r["user_id"]) for r in rows]
+
+
 def delete_all():
     with _write_lock, get_connection() as conn:
         conn.execute("DELETE FROM ai_transactions")

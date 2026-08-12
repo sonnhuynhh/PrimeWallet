@@ -84,6 +84,21 @@ export interface EtherscanResponse {
   result: EtherscanTransaction[];
 }
 
+export interface NftTransferRecord {
+  contractAddress: string;
+  tokenID: string;
+  tokenName?: string;
+  tokenSymbol?: string;
+  from: string;
+  to: string;
+}
+
+export interface NftTransfersResponse {
+  status: string;
+  message: string;
+  result: NftTransferRecord[];
+}
+
 export interface InAppTransaction {
   id: string;
   type: string;

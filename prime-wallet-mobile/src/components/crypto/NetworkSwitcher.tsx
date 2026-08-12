@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
+import { Modal } from "../ui/Modal";
 import { networkLabel, normalizeNetworkId } from "../../lib/chains";
 import { useCrypto } from "../../context/CryptoContext";
 import { toastErr, toastOk } from "../feedback/toast";
 import type { NetworkInfo } from "../../services/crypto";
+import { shellTheme } from "../../theme/tokens";
 
 export function NetworkSwitcher() {
+  const theme = shellTheme.crypto;
   const { networks, activeWallet, activeNetwork, switchNetwork } = useCrypto();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -35,42 +38,47 @@ export function NetworkSwitcher() {
     <>
       <Pressable
         onPress={() => setOpen(true)}
-        className="mx-4 mb-2 flex-row items-center justify-between rounded-2xl border border-border bg-white/5 px-4 py-3"
+        className="mx-4 mb-2 flex-row items-center justify-between rounded-2xl border border-border px-4 py-3"
+        style={{ backgroundColor: "rgba(255,255,255,0.04)" }}
       >
         <View className="flex-row items-center gap-2">
-          <MaterialCommunityIcons name="lan-connect" size={18} color="#fc72ff" />
-          <Text className="font-bold text-white">
-            {activeNetwork?.label ?? activeNetwork?.name ?? networkLabel(currentId)}
-          </Text>
+          <View className="h-8 w-8 items-center justify-center rounded-xl" style={{ backgroundColor: theme.primarySoft }}>
+            <MaterialCommunityIcons name="lan-connect" size={16} color={theme.primary} />
+          </View>
+          <View>
+            <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Mạng</Text>
+            <Text className="font-bold text-white">
+              {activeNetwork?.label ?? activeNetwork?.name ?? networkLabel(currentId)}
+            </Text>
+          </View>
         </View>
         {busy ? (
-          <ActivityIndicator size="small" color="#fc72ff" />
+          <ActivityIndicator size="small" color={theme.primary} />
         ) : (
           <MaterialCommunityIcons name="chevron-down" size={20} color="#9b9b9b" />
         )}
       </Pressable>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <Pressable className="flex-1 bg-black/70" onPress={() => setOpen(false)} />
-        <View className="absolute bottom-0 left-0 right-0 rounded-t-3xl border border-border bg-surface-1 p-4">
-          <Text className="mb-3 text-lg font-extrabold text-white">Chọn mạng</Text>
-          <ScrollView className="max-h-80">
-            {networks.map((net: NetworkInfo) => {
-              const selected = normalizeNetworkId(net.id) === currentId;
-              return (
-                <Pressable
-                  key={net.id}
-                  onPress={() => void onSelect(net.id)}
-                  className="mb-2 flex-row items-center justify-between rounded-2xl border border-border px-4 py-3"
-                  style={{ backgroundColor: selected ? "rgba(252,114,255,0.12)" : "transparent" }}
-                >
-                  <Text className="font-semibold text-white">{net.label ?? net.name}</Text>
-                  {selected ? <MaterialCommunityIcons name="check" size={18} color="#fc72ff" /> : null}
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
+      <Modal visible={open} title="Chọn mạng" description="5 mạng EVM được hỗ trợ" onClose={() => setOpen(false)}>
+        <ScrollView showsVerticalScrollIndicator={false} className="max-h-80">
+          {networks.map((net: NetworkInfo) => {
+            const selected = normalizeNetworkId(net.id) === currentId;
+            return (
+              <Pressable
+                key={net.id}
+                onPress={() => void onSelect(net.id)}
+                className="mb-2 flex-row items-center justify-between rounded-2xl border border-border px-4 py-3"
+                style={{
+                  backgroundColor: selected ? theme.primarySoft : "rgba(255,255,255,0.03)",
+                  borderColor: selected ? `${theme.primary}55` : "rgba(255,255,255,0.08)",
+                }}
+              >
+                <Text className="font-semibold text-white">{net.label ?? net.name}</Text>
+                {selected ? <MaterialCommunityIcons name="check-circle" size={20} color={theme.primary} /> : null}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </Modal>
     </>
   );

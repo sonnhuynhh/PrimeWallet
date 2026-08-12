@@ -1,0 +1,42 @@
+@startuml Hinh_2_8_Sequence_Canh_Bao_Rui_Ro
+title Hình 2.8 / 2.14 – Sequence: Cảnh báo rủi ro (Kafka + FastAPI)
+skinparam sequenceMessageAlign center
+
+participant "TransactionService" as TxSvc
+queue "Kafka\nwallet.transactions" as Kafka
+participant "AI Consumer\n(FastAPI)" as Consumer
+participant "FraudDetector" as Fraud
+database "SQLite ai.db" as AiDB
+participant "NotificationConsumer\n(Spring)" as Notif
+actor "Người dùng" as User
+participant "Web/Mobile" as UI
+
+== Giao dịch mới ==
+TxSvc -> TxSvc : Hoàn tất TRANSFER/TOPUP
+TxSvc -> Kafka : publish(TransactionEvent)\n{userId, amount, type, timestamp}
+
+== AI phân tích bất đồng bộ ==
+Kafka -> Consumer : Nhận message
+Consumer -> AiDB : Lưu / cập nhật transaction
+Consumer -> Fraud : detect_anomalies(userId)
+Fraud -> Fraud : Rule: tần suất cao\n(2 giao dịch < 60s)
+Fraud -> Fraud : Rule: số tiền bất thường\n(> 3x trung bình)
+Fraud -> Fraud : ML: IsolationForest\n(trên 50 giao dịch gần nhất)
+Fraud --> Consumer : alerts[] + risk_score
+
+alt risk_score >= ngưỡng cảnh báo
+  Consumer -> Kafka : publish alert event\n(tùy cấu hình)
+  Kafka -> Notif : consume alert
+  Notif -> UI : WebSocket / polling notification
+  UI --> User : "Phát hiện giao dịch bất thường"
+end
+
+== User xem chi tiết ==
+User -> UI : Mở AI Insights
+UI -> UI : GET /api/v1/ai/insights
+note right
+  Risk score chỉ hiển thị
+  Backend KHÔNG chặn giao dịch theo AI score
+end note
+
+@enduml

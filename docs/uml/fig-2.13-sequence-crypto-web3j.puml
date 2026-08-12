@@ -1,0 +1,41 @@
+@startuml Hinh_2_13_Sequence_Crypto_OnChain_Web3j
+title Hình 2.13 – Sequence: Giao dịch Crypto on-chain (Web3j)
+skinparam sequenceMessageAlign center
+
+actor "Người dùng" as User
+participant "Web/Mobile" as UI
+participant "CryptoTransactionController" as Ctrl
+participant "GasEstimationService" as Gas
+participant "ERC20Service" as ERC20
+participant "Web3j\n(JsonRpc)" as Web3j
+participant "Blockchain\n(ETH/BSC/Polygon)" as Chain
+participant "EtherscanService" as Explorer
+database "PostgreSQL" as DB
+
+== Ước tính phí gas ==
+User -> UI : Nhập địa chỉ nhận + số lượng token
+UI -> Ctrl : POST /crypto/transactions/estimate-gas
+Ctrl -> Gas : estimateGas(from, to, data)
+Gas -> Web3j : eth_estimateGas
+Web3j -> Chain : RPC call
+Chain --> Gas : gas limit + gas price
+Gas --> Ctrl : GasEstimateResponse
+Ctrl --> UI : Hiển thị phí ước tính
+
+== Ký & broadcast ==
+User -> UI : Ký tx (private key / WalletConnect)
+UI -> Ctrl : POST /crypto/transactions/broadcast\n{signedTransactionHex}
+Ctrl -> Web3j : eth_sendRawTransaction
+Web3j -> Chain : Broadcast signed tx
+Chain --> Web3j : transactionHash
+Ctrl -> DB : Lưu CryptoTransaction\n(SEND, PENDING/SUCCESS)
+Ctrl --> UI : txHash
+UI --> User : Link explorer
+
+== Đồng bộ lịch sử (fallback) ==
+UI -> Ctrl : GET /crypto/wallets/{id}/history
+Ctrl -> Explorer : getTransactionHistory(address, network)
+Explorer --> Ctrl : Etherscan V2 API
+Ctrl --> UI : Danh sách tx on-chain
+
+@enduml

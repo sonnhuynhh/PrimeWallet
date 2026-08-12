@@ -1,0 +1,48 @@
+@startuml Hinh_2_16_C4_System_Context
+title Hình 2.16 – System Context Diagram (PrimeWallet)
+skinparam rectangle {
+  roundCorner 15
+  BackgroundColor #E8F4FD
+}
+skinparam actor {
+  BackgroundColor #FFF8E1
+}
+
+actor "Người dùng" as user
+actor "Admin" as admin
+
+rectangle "PrimeWallet System" as pw #LightBlue {
+  component "Spring Boot API\n:8080" as api
+  component "FastAPI AI Service\n:8000" as ai
+  component "Web (React)" as web
+  component "Mobile (Expo)" as mobile
+  database "PostgreSQL" as pg
+  queue "Kafka" as kafka
+}
+
+cloud "VNPay Gateway" as vnpay
+cloud "EVM Blockchain\n(ETH/BSC/Polygon)" as chain
+cloud "Etherscan / Alchemy" as explorer
+cloud "WalletConnect" as wc
+
+user --> web : HTTPS
+user --> mobile : HTTPS
+admin --> api : REST (ADMIN role)
+
+web --> api
+mobile --> api
+api --> pg
+api --> kafka
+kafka --> ai
+api --> vnpay : Nạp tiền VND
+api --> chain : Web3j RPC
+api --> explorer : Lịch sử / NFT
+mobile --> wc : Ký tx
+wc --> chain
+
+note bottom of pw
+  Ví điện tử đa nền tảng:
+  Fiat (VND) + Crypto (EVM) + AI phát hiện gian lận
+end note
+
+@enduml

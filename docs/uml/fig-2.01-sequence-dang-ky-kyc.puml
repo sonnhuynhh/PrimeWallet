@@ -1,0 +1,48 @@
+@startuml Hinh_2_1_Sequence_Dang_ky_KYC
+title Hình 2.1 / 2.11 – Sequence: Đăng ký và Luồng duyệt KYC
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+
+actor "Người dùng" as User
+participant "Web/Mobile\n(React/Expo)" as UI
+participant "AuthController" as AuthCtrl
+participant "AuthService" as AuthSvc
+database "PostgreSQL" as DB
+actor "Admin" as Admin
+participant "AdminController" as AdminCtrl
+participant "AdminService" as AdminSvc
+
+== Đăng ký tài khoản ==
+User -> UI : Nhập email, phone, password, fullName
+UI -> AuthCtrl : POST /api/v1/auth/register
+AuthCtrl -> AuthSvc : register(request)
+AuthSvc -> DB : Kiểm tra email/phone trùng
+AuthSvc -> DB : Lưu User\n(role=USER, kycStatus=PENDING, status=ACTIVE)
+AuthSvc -> DB : Tạo Account VND mặc định (AccountService)
+AuthSvc --> AuthCtrl : User + tokens (optional)
+AuthCtrl --> UI : 201 Created
+UI --> User : Đăng ký thành công\n(KYC = PENDING)
+
+== Admin duyệt KYC ==
+Admin -> UI : Mở Admin Dashboard
+UI -> AdminCtrl : GET /api/v1/admin/users
+AdminCtrl -> AdminSvc : listUsers()
+AdminSvc -> DB : Truy vấn users
+AdminSvc --> AdminCtrl : Danh sách user
+AdminCtrl --> UI : Hiển thị user chờ KYC
+
+Admin -> UI : Duyệt KYC (VERIFIED/REJECTED)
+UI -> AdminCtrl : PUT /api/v1/admin/users/{id}/kyc\n{kycStatus, note}
+AdminCtrl -> AdminSvc : updateKyc(id, request)
+AdminSvc -> DB : Cập nhật User.kycStatus
+AdminSvc -> DB : Ghi AuditLog (KYC_UPDATE)
+AdminSvc --> AdminCtrl : AdminUserResponse
+AdminCtrl --> UI : 200 OK
+UI --> Admin : Thông báo duyệt KYC thành công
+
+note over User, DB
+  User chưa VERIFIED: giao dịch > 10 triệu VND bị từ chối
+  (validateUserForTransaction trong TransactionService)
+end note
+
+@enduml

@@ -9,6 +9,7 @@ export interface AiInsight {
 
 export interface AiInsightsData {
   available?: boolean;
+  error?: string;
   has_data?: boolean;
   message?: string;
   insights?: AiInsight[];
@@ -17,6 +18,7 @@ export interface AiInsightsData {
 
 export interface AiRiskScoreData {
   available?: boolean;
+  error?: string;
   score?: number;
   level?: "SAFE" | "MEDIUM" | "HIGH";
   label?: string;

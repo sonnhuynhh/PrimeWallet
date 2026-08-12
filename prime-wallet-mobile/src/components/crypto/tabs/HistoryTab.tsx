@@ -4,34 +4,64 @@ import { ethers } from "ethers";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { Card } from "../../ui/Card";
-import { Button } from "../../ui/Button";
 import { Badge } from "../../ui/Badge";
+import { EmptyState } from "../../ui/EmptyState";
+import { SegmentToggle } from "../SegmentToggle";
 import { toastErr } from "../../feedback/toast";
 import { shortAddress } from "../../../lib/utils";
-import { txExplorerUrl } from "../../../lib/chains";
+import { nativeSymbolOf, txExplorerUrl } from "../../../lib/chains";
+import { fetchOnChainTransactions, normalizeEtherscanResult } from "../../../lib/onchain/history";
+import { ETHERSCAN_API_KEY } from "../../../config/env";
 import { useCrypto } from "../../../context/CryptoContext";
 import { getWalletHistory, getInAppTransactions } from "../../../services/crypto";
 import type { EtherscanTransaction } from "../../../services/crypto";
 import type { InAppTransaction } from "../../../types/crypto";
+import { shellTheme } from "../../../theme/tokens";
 
 type Mode = "onchain" | "inapp";
 
+const MODES = [
+  { id: "onchain" as const, label: "On-chain" },
+  { id: "inapp" as const, label: "In-app" },
+];
+
 export function HistoryTab() {
-  const { activeWallet } = useCrypto();
+  const theme = shellTheme.crypto;
+  const { activeWallet, activeNetwork } = useCrypto();
   const [mode, setMode] = useState<Mode>("onchain");
   const [onchain, setOnchain] = useState<EtherscanTransaction[]>([]);
   const [inApp, setInApp] = useState<InAppTransaction[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+
+  const nativeSymbol =
+    activeNetwork?.nativeSymbol ?? nativeSymbolOf(activeWallet?.blockchainNetwork ?? "eth_sepolia");
 
   const load = useCallback(async () => {
     if (!activeWallet) return;
     setLoading(true);
+    setHint(null);
     try {
       if (mode === "onchain") {
         const res = await getWalletHistory(activeWallet.id);
-        setOnchain(Array.isArray(res.result) ? res.result : []);
+        let rows = normalizeEtherscanResult(res.result);
+
+        if (rows.length === 0) {
+          const fallback = await fetchOnChainTransactions(
+            activeWallet.blockchainNetwork,
+            activeWallet.walletAddress,
+            ETHERSCAN_API_KEY || undefined,
+          );
+          if (fallback.length > 0) {
+            rows = fallback;
+          } else if (!ETHERSCAN_API_KEY) {
+            setHint("Thêm EXPO_PUBLIC_ETHERSCAN_API_KEY vào .env để fallback lịch sử on-chain.");
+          }
+        }
+
+        setOnchain(rows);
       } else {
-        const page = await getInAppTransactions(activeWallet.id);
+        const page = await getInAppTransactions(activeWallet.id, 0, 50);
         setInApp(page.content ?? []);
       }
     } catch (e) {
@@ -47,84 +77,101 @@ export function HistoryTab() {
 
   if (!activeWallet) {
     return (
-      <Card className="mx-4 my-4">
-        <Text className="text-center text-muted-foreground">Liên kết ví để xem lịch sử.</Text>
-      </Card>
+      <View className="flex-1 px-4 py-8">
+        <EmptyState icon="history" title="Chưa có ví" description="Liên kết ví để xem lịch sử giao dịch." />
+      </View>
+    );
+  }
+
+  const header = (
+    <View className="mb-4 gap-3">
+      <View className="flex-row items-center justify-between">
+        <Text className="text-lg font-extrabold text-white">Lịch sử</Text>
+        <Pressable onPress={() => void load()} hitSlop={8} className="rounded-full bg-white/5 p-2">
+          <MaterialCommunityIcons name="refresh" size={18} color={theme.primary} />
+        </Pressable>
+      </View>
+      <SegmentToggle options={MODES} value={mode} onChange={setMode} />
+      {loading ? <ActivityIndicator color={theme.primary} /> : null}
+      {hint ? (
+        <Text className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
+          {hint}
+        </Text>
+      ) : null}
+    </View>
+  );
+
+  if (mode === "onchain") {
+    return (
+      <FlatList
+        style={{ flex: 1 }}
+        className="px-4"
+        data={onchain}
+        keyExtractor={(item) => item.hash}
+        contentContainerStyle={{ gap: 10, paddingBottom: 24, flexGrow: 1 }}
+        ListHeaderComponent={header}
+        renderItem={({ item }) => {
+          const value = ethers.formatEther(item.value);
+          const date = new Date(parseInt(item.timeStamp, 10) * 1000).toLocaleString("vi-VN");
+          const failed = item.isError === "1";
+          return (
+            <Pressable onPress={() => Linking.openURL(txExplorerUrl(activeWallet.blockchainNetwork, item.hash))}>
+              <Card className="gap-2">
+                <View className="flex-row items-center justify-between">
+                  <View className="flex-row items-center gap-2">
+                    <View
+                      className="h-8 w-8 items-center justify-center rounded-xl"
+                      style={{ backgroundColor: theme.primarySoft }}
+                    >
+                      <MaterialCommunityIcons name="arrow-top-right" size={16} color={theme.primary} />
+                    </View>
+                    <Text className="font-bold text-white">Transfer</Text>
+                  </View>
+                  <Badge variant={failed ? "danger" : "success"}>{failed ? "Failed" : "OK"}</Badge>
+                </View>
+                <Text className="text-xs text-muted-foreground">{date}</Text>
+                <Text className="font-mono text-xs text-muted-foreground">{shortAddress(item.hash, 10, 8)}</Text>
+                <Text className="font-extrabold" style={{ color: theme.primary }}>
+                  {value} {nativeSymbol}
+                </Text>
+              </Card>
+            </Pressable>
+          );
+        }}
+        ListEmptyComponent={
+          !loading ? (
+            <EmptyState icon="history" title="Chưa có giao dịch" description="Giao dịch on-chain sẽ hiện ở đây." />
+          ) : null
+        }
+      />
     );
   }
 
   return (
-    <View className="flex-1 px-4 py-4">
-      <View className="mb-3 flex-row items-center justify-between">
-        <Text className="text-lg font-extrabold text-white">Lịch sử</Text>
-        <Button title="Làm mới" variant="ghost" onPress={() => void load()} />
-      </View>
-
-      <View className="mb-3 flex-row gap-2">
-        <Pressable
-          onPress={() => setMode("onchain")}
-          className="flex-1 items-center rounded-full py-2"
-          style={{ backgroundColor: mode === "onchain" ? "rgba(252,114,255,0.15)" : "rgba(255,255,255,0.05)" }}
-        >
-          <Text className="text-xs font-bold text-white">On-chain</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setMode("inapp")}
-          className="flex-1 items-center rounded-full py-2"
-          style={{ backgroundColor: mode === "inapp" ? "rgba(252,114,255,0.15)" : "rgba(255,255,255,0.05)" }}
-        >
-          <Text className="text-xs font-bold text-white">In-app</Text>
-        </Pressable>
-      </View>
-
-      {loading ? <ActivityIndicator color="#fc72ff" /> : null}
-
-      {mode === "onchain" ? (
-        <FlatList
-          data={onchain}
-          keyExtractor={(item) => item.hash}
-          contentContainerStyle={{ gap: 10, paddingBottom: 24 }}
-          renderItem={({ item }) => {
-            const ethValue = ethers.formatEther(item.value);
-            const date = new Date(parseInt(item.timeStamp, 10) * 1000).toLocaleString("vi-VN");
-            return (
-              <Pressable onPress={() => Linking.openURL(txExplorerUrl(activeWallet.blockchainNetwork, item.hash))}>
-                <Card className="gap-1">
-                  <View className="flex-row justify-between">
-                    <Text className="font-bold text-white">Transfer</Text>
-                    <MaterialCommunityIcons name="open-in-new" size={14} color="#9b9b9b" />
-                  </View>
-                  <Text className="text-xs text-muted-foreground">{date}</Text>
-                  <Text className="font-mono text-xs text-muted-foreground">{shortAddress(item.hash, 10, 8)}</Text>
-                  <Text className="font-extrabold text-primary">{ethValue} ETH</Text>
-                </Card>
-              </Pressable>
-            );
-          }}
-          ListEmptyComponent={!loading ? <Text className="text-muted-foreground">Chưa có giao dịch on-chain.</Text> : null}
-        />
-      ) : (
-        <FlatList
-          data={inApp}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ gap: 10, paddingBottom: 24 }}
-          renderItem={({ item }) => (
-            <Card className="gap-1">
-              <View className="flex-row items-center justify-between">
-                <Text className="font-bold text-white">{item.type}</Text>
-                <Badge variant={item.status === "SUCCESS" ? "success" : "warning"}>{item.status}</Badge>
-              </View>
-              <Text className="text-sm text-primary">
-                {item.amount} {item.symbol}
-              </Text>
-              <Text className="text-xs text-muted-foreground">
-                → {shortAddress(item.toAddress)}
-              </Text>
-            </Card>
-          )}
-          ListEmptyComponent={!loading ? <Text className="text-muted-foreground">Chưa có giao dịch in-app.</Text> : null}
-        />
+    <FlatList
+      style={{ flex: 1 }}
+      className="px-4"
+      data={inApp}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={{ gap: 10, paddingBottom: 24, flexGrow: 1 }}
+      ListHeaderComponent={header}
+      renderItem={({ item }) => (
+        <Card className="gap-2">
+          <View className="flex-row items-center justify-between">
+            <Text className="font-bold text-white">{item.type}</Text>
+            <Badge variant={item.status === "SUCCESS" ? "success" : "warning"}>{item.status}</Badge>
+          </View>
+          <Text className="text-sm font-extrabold" style={{ color: theme.primary }}>
+            {item.amount} {item.symbol}
+          </Text>
+          <Text className="text-xs text-muted-foreground">→ {shortAddress(item.toAddress)}</Text>
+        </Card>
       )}
-    </View>
+      ListEmptyComponent={
+        !loading ? (
+          <EmptyState icon="history" title="Chưa có giao dịch" description="Giao dịch in-app sẽ hiện ở đây." />
+        ) : null
+      }
+    />
   );
 }

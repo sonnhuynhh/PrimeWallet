@@ -87,3 +87,49 @@ export async function getAdminTransactions(page = 0, size = 20, q?: string, type
 export async function getAdminStats() {
   return request<AdminStats>(`/api/v1/admin/stats`);
 }
+
+export type FraudRiskLevel = "SAFE" | "MEDIUM" | "HIGH";
+
+export type FraudReportUser = {
+  user_id: string;
+  email?: string | null;
+  fullName?: string | null;
+  phone?: string | null;
+  status?: string | null;
+  kycStatus?: string | null;
+  role?: string | null;
+  transaction_count: number;
+  score: number;
+  level: FraudRiskLevel;
+  label?: string;
+  factors?: string[];
+  anomalies?: number;
+  model_trained?: boolean;
+};
+
+export type FraudReport = {
+  available?: boolean;
+  error?: string;
+  message?: string;
+  model_trained?: boolean;
+  total_users_scanned?: number;
+  summary?: {
+    high: number;
+    medium: number;
+    safe: number;
+    total: number;
+  };
+  users?: FraudReportUser[];
+};
+
+export async function getAdminFraudReport(minLevel: FraudRiskLevel = "SAFE", limit = 100) {
+  const params = new URLSearchParams({
+    minLevel,
+    limit: String(limit),
+  });
+  return request<FraudReport>(`/api/v1/admin/fraud-report?${params.toString()}`);
+}
+
+export async function getAdminUserRiskScore(userId: string) {
+  return request<import("./ai").AiRiskScoreData>(`/api/v1/admin/users/${userId}/risk-score`);
+}

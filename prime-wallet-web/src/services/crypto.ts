@@ -8,6 +8,7 @@ import type {
   GasPriceData,
   TransactionHashData,
   EtherscanResponse,
+  NftTransfersResponse,
   InAppTransaction,
   PageResponse,
   OwnershipChallengeData,
@@ -157,6 +158,10 @@ export async function recordTransaction(payload: {
 
 export async function getWalletHistory(walletId: string): Promise<EtherscanResponse> {
   return request<EtherscanResponse>(`/api/v1/crypto/wallets/${walletId}/history`);
+}
+
+export async function getWalletNftTransfers(walletId: string): Promise<NftTransfersResponse> {
+  return request<NftTransfersResponse>(`/api/v1/crypto/wallets/${walletId}/nfts`);
 }
 
 export async function getInAppTransactions(

@@ -5,6 +5,7 @@ import com.sonnhuynhh.primewallet.auth.dto.AdminUserResponse;
 import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
 import com.sonnhuynhh.primewallet.auth.entity.User;
 import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
+import com.sonnhuynhh.primewallet.ai.service.AiInsightService;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
 import com.sonnhuynhh.primewallet.common.service.AuditService;
 import com.sonnhuynhh.primewallet.wallet.dto.TransactionResponse;
@@ -23,6 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import com.sonnhuynhh.primewallet.common.entity.AuditLog;
 import com.sonnhuynhh.primewallet.common.repository.AuditLogRepository;
@@ -54,6 +59,62 @@ public class AdminService {
     private final TransactionRepository transactionRepository;
     private final AuditService auditService;
     private final AuditLogRepository auditLogRepository;
+    private final AiInsightService aiInsightService;
+
+    // ==================== FRAUD REPORT ====================
+
+    /**
+     * Báo cáo gian lận từ AI microservice, bổ sung email/họ tên/trạng thái từ Postgres.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getFraudReport(String minLevel, int limit) {
+        Map<String, Object> report = aiInsightService.getFraudReport(minLevel, limit);
+        if (Boolean.FALSE.equals(report.get("available"))) {
+            return report;
+        }
+
+        Object usersObj = report.get("users");
+        if (!(usersObj instanceof List<?> rawUsers)) {
+            return report;
+        }
+
+        List<Map<String, Object>> enriched = new ArrayList<>();
+        for (Object item : rawUsers) {
+            if (!(item instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) raw);
+            String userIdStr = String.valueOf(row.getOrDefault("user_id", ""));
+            try {
+                UUID userId = UUID.fromString(userIdStr);
+                userRepository.findById(userId).ifPresentOrElse(user -> {
+                    row.put("email", user.getEmail());
+                    row.put("fullName", user.getFullName());
+                    row.put("phone", user.getPhone());
+                    row.put("status", user.getStatus());
+                    row.put("kycStatus", user.getKycStatus() != null ? user.getKycStatus().name() : null);
+                    row.put("role", user.getRole() != null ? user.getRole().name() : null);
+                }, () -> {
+                    row.put("email", null);
+                    row.put("fullName", "Không tìm thấy trong hệ thống");
+                    row.put("status", null);
+                });
+            } catch (IllegalArgumentException ex) {
+                row.put("email", null);
+                row.put("fullName", "User ID không hợp lệ");
+            }
+            enriched.add(row);
+        }
+
+        report.put("users", enriched);
+        return report;
+    }
+
+    public Map<String, Object> getUserRiskScore(UUID userId) {
+        // Đảm bảo user tồn tại trước khi hỏi AI
+        getUserById(userId);
+        return aiInsightService.getRiskScore(userId.toString());
+    }
 
     // ==================== AUDIT LOGS ====================
 

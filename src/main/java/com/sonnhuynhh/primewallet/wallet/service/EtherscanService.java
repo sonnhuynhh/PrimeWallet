@@ -3,6 +3,7 @@ package com.sonnhuynhh.primewallet.wallet.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sonnhuynhh.primewallet.wallet.dto.EtherscanResponse;
+import com.sonnhuynhh.primewallet.wallet.dto.NftTransfersResponse;
 import com.sonnhuynhh.primewallet.wallet.enums.BlockchainNetwork;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,8 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Service gọi explorer API V2 — mỗi mạng dùng đúng domain (BscScan, PolygonScan…).
- * Gói miễn phí Etherscan không hỗ trợ BSC/Polygon/Base qua api.etherscan.io/v2.
+ * Service gọi Etherscan API V2 thống nhất (chainid chọn mạng).
  *
  * @see <a href="https://docs.etherscan.io/v2-migration">Etherscan V2 migration</a>
  */
@@ -28,14 +28,8 @@ public class EtherscanService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** Endpoint V2 theo explorer — không dùng V1 (đã deprecated). */
-    private static final Map<BlockchainNetwork, String> V2_API = Map.of(
-            BlockchainNetwork.ETHEREUM_MAINNET, "https://api.etherscan.io/v2/api",
-            BlockchainNetwork.ETH_SEPOLIA, "https://api.etherscan.io/v2/api",
-            BlockchainNetwork.BSC_MAINNET, "https://api.bscscan.com/v2/api",
-            BlockchainNetwork.POLYGON_MAINNET, "https://api.polygonscan.com/v2/api",
-            BlockchainNetwork.BASE_MAINNET, "https://api.basescan.org/v2/api"
-    );
+  /** Endpoint V2 thống nhất — mọi mạng dùng chainid (api.bscscan.com/v2 trả 404). */
+    private static final String V2_API = "https://api.etherscan.io/v2/api";
 
     private final RestTemplate restTemplate;
     private final String apiKey;
@@ -68,18 +62,7 @@ public class EtherscanService {
                 "sort", "desc"
         );
 
-        String v2Base = V2_API.getOrDefault(network, V2_API.get(BlockchainNetwork.ETH_SEPOLIA));
-        EtherscanResponse response = parseTxListResponse(buildV2Url(v2Base, network, txParams), address, network);
-
-        // Fallback: thử unified etherscan.io V2 nếu explorer riêng thất bại (một số gói trả paid-only)
-        if (!isSuccessfulTxList(response) && !v2Base.contains("api.etherscan.io")) {
-            log.info("Explorer V2 {} thất bại, thử api.etherscan.io/v2 cho {}", v2Base, network.getId());
-            response = parseTxListResponse(
-                    buildV2Url("https://api.etherscan.io/v2/api", network, txParams),
-                    address, network);
-        }
-
-        return response;
+        return parseTxListResponse(buildV2Url(network, txParams), address, network);
     }
 
     public EtherscanResponse getTransactionHistory(String address) {
@@ -91,8 +74,7 @@ public class EtherscanService {
             return null;
         }
 
-        String v2Base = V2_API.getOrDefault(network, V2_API.get(BlockchainNetwork.ETH_SEPOLIA));
-        String url = buildV2Url(v2Base, network, Map.of(
+        String url = buildV2Url(network, Map.of(
                 "module", "account",
                 "action", "balance",
                 "address", address,
@@ -112,6 +94,33 @@ public class EtherscanService {
 
     public BigInteger getWalletBalance(String address) {
         return getWalletBalance(address, BlockchainNetwork.ETH_SEPOLIA);
+    }
+
+    /**
+     * Lịch sử chuyển nhượng ERC-721 — dùng để dựng danh sách NFT đang giữ.
+     */
+    public NftTransfersResponse getNftTokenTransfers(String address, BlockchainNetwork network) {
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("etherscan.api-key chưa cấu hình — tra cứu NFT sẽ thất bại");
+            return emptyNftResponse("0", "Chưa cấu hình ETHERSCAN_API_KEY trên backend");
+        }
+
+        if (!isValidAddress(address)) {
+            return emptyNftResponse("0", "Địa chỉ ví không hợp lệ (phải bắt đầu 0x và đủ 40 ký tự hex)");
+        }
+
+        Map<String, String> params = Map.of(
+                "module", "account",
+                "action", "tokennfttx",
+                "address", address,
+                "startblock", "0",
+                "endblock", "99999999",
+                "page", "1",
+                "offset", "1000",
+                "sort", "asc"
+        );
+
+        return parseNftTransfersResponse(buildV2Url(network, params), address, network);
     }
 
     private EtherscanResponse parseTxListResponse(String url, String address, BlockchainNetwork network) {
@@ -169,8 +178,67 @@ public class EtherscanService {
         return "1".equals(response.getStatus());
     }
 
-    private String buildV2Url(String baseUrl, BlockchainNetwork network, Map<String, String> params) {
-        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl)
+    private NftTransfersResponse parseNftTransfersResponse(String url, String address, BlockchainNetwork network) {
+        try {
+            String raw = restTemplate.getForObject(url, String.class);
+            if (raw == null || raw.isBlank() || raw.trim().startsWith("<")) {
+                return emptyNftResponse("0", "Empty or invalid response from explorer");
+            }
+
+            JsonNode root = JSON.readTree(raw);
+            String rootStatus = root.path("status").asText("0");
+            String rootMessage = root.path("message").asText("");
+            JsonNode resultNode = root.get("result");
+
+            if (resultNode != null && !resultNode.isNull() && resultNode.isTextual()) {
+                String detail = resultNode.asText("");
+                if (isNoTransactionsMessage(detail) || isNoTransactionsMessage(rootMessage)) {
+                    return successNftResponse(Collections.emptyList());
+                }
+                log.warn("Explorer tokennfttx lỗi cho {} on {}: {} / {}", address, network.getId(), rootMessage, detail);
+                return emptyNftResponse("0", formatExplorerMessage(rootMessage, detail));
+            }
+
+            if (resultNode == null || resultNode.isNull()) {
+                if ("1".equals(rootStatus) || isNoTransactionsMessage(rootMessage)) {
+                    return successNftResponse(Collections.emptyList());
+                }
+                return emptyNftResponse("0", formatExplorerMessage(rootMessage, null));
+            }
+
+            if (resultNode.isArray()) {
+                List<NftTransfersResponse.NftTransferRecord> records = new ArrayList<>();
+                for (JsonNode item : resultNode) {
+                    records.add(JSON.treeToValue(item, NftTransfersResponse.NftTransferRecord.class));
+                }
+                return successNftResponse(records);
+            }
+
+            return emptyNftResponse("0", formatExplorerMessage(rootMessage, resultNode.asText("")));
+        } catch (Exception e) {
+            log.error("Không lấy được NFT transfers cho {} on {}: {}", address, network.getId(), e.getMessage());
+            return emptyNftResponse("0", "API call failed: " + e.getMessage());
+        }
+    }
+
+    private NftTransfersResponse successNftResponse(List<NftTransfersResponse.NftTransferRecord> records) {
+        NftTransfersResponse response = new NftTransfersResponse();
+        response.setStatus("1");
+        response.setMessage("OK");
+        response.setResult(records);
+        return response;
+    }
+
+    private NftTransfersResponse emptyNftResponse(String status, String message) {
+        NftTransfersResponse empty = new NftTransfersResponse();
+        empty.setStatus(status);
+        empty.setMessage(message);
+        empty.setResult(Collections.emptyList());
+        return empty;
+    }
+
+    private String buildV2Url(BlockchainNetwork network, Map<String, String> params) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(V2_API)
                 .queryParam("chainid", network.getChainId());
         params.forEach(builder::queryParam);
         return builder.queryParam("apikey", apiKey).build().encode().toUriString();

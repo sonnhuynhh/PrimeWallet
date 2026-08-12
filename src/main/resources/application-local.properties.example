@@ -33,6 +33,10 @@ vnpay.return-url=http://localhost:5173/vnpay-return
 # KHÔNG cần đăng ký riêng BscScan/PolygonScan.
 etherscan.api-key=YOUR_ETHERSCAN_API_KEY
 
+# ==================== REDIS (Windows) ====================
+# Hyper-V thường reserve 6379 → docker-compose map host 16379 → container 6379
+# spring.data.redis.port=16379
+
 # ==================== CORS (tùy chọn) ====================
 # Ghi đè origin cho môi trường thật, VD: https://app.primewallet.com
 # cors.allowed-origins=https://app.primewallet.com

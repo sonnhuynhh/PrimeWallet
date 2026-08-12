@@ -13,8 +13,8 @@ export function formatExplorerError(message?: string): string {
   if (lower.includes('rate limit') || lower.includes('max rate')) {
     return 'Vượt giới hạn gọi API Etherscan — thử lại sau vài giây';
   }
-  if (lower.includes('not supported for this chain')) {
-    return 'Gói API miễn phí chưa hỗ trợ mạng này — thử mạng khác hoặc nâng cấp API';
+  if (lower.includes('not supported for this chain') || lower.includes('free api access is not supported')) {
+    return 'Gói API miễn phí chưa hỗ trợ mạng này — dùng Polygon/Ethereum hoặc thêm VITE_ALCHEMY_API_KEY';
   }
   if (lower.includes('no transactions') || lower.includes('no record found') || lower.includes('no tx found')) {
     return 'Không có giao dịch nào cho địa chỉ này';

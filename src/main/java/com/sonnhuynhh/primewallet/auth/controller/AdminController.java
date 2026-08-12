@@ -24,6 +24,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -183,6 +184,30 @@ public class AdminController {
 
         DailyReport report = reconciliationService.runReconciliationForDate(date);
         return ResponseEntity.ok(ApiResponse.success("Đối soát hoàn tất", report));
+    }
+
+    /**
+     * Báo cáo gian lận / rủi ro từ AI microservice.
+     *
+     * GET /api/v1/admin/fraud-report?minLevel=MEDIUM&limit=100
+     */
+    @GetMapping("/fraud-report")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getFraudReport(
+            @RequestParam(required = false, defaultValue = "SAFE") String minLevel,
+            @RequestParam(required = false, defaultValue = "100") int limit) {
+        Map<String, Object> report = adminService.getFraudReport(minLevel, limit);
+        return ResponseEntity.ok(ApiResponse.success("Báo cáo gian lận", report));
+    }
+
+    /**
+     * Điểm rủi ro AI của một user cụ thể.
+     *
+     * GET /api/v1/admin/users/{id}/risk-score
+     */
+    @GetMapping("/users/{id}/risk-score")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getUserRiskScore(@PathVariable UUID id) {
+        Map<String, Object> risk = adminService.getUserRiskScore(id);
+        return ResponseEntity.ok(ApiResponse.success("Điểm rủi ro người dùng", risk));
     }
 
     /**

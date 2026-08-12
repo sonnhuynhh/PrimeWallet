@@ -11,6 +11,7 @@ Cải tiến so với bản cũ:
 Score: 0 (bình thường) → 1 (cực kỳ bất thường)
 """
 import os
+import re
 from datetime import datetime
 
 import joblib
@@ -20,6 +21,38 @@ from sklearn.ensemble import IsolationForest
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 MODEL_PATH = os.path.join(DATA_DIR, "fraud_model.joblib")
 MIN_TRAIN_SAMPLES = 10
+
+# Java LocalDateTime có thể trả 9 chữ số nano — Python 3.10 fromisoformat chỉ hỗ trợ tối đa 6.
+_ISO_TS_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ](?P<time>\d{2}:\d{2}:\d{2})(?:\.(?P<frac>\d+))?"
+)
+
+
+def parse_timestamp(value) -> datetime | None:
+    """Parse timestamp từ Java/Kafka/SQLite — chuẩn hoá nano → micro giây."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    match = _ISO_TS_RE.match(text)
+    if match:
+        frac = match.group("frac") or ""
+        if len(frac) > 6:
+            frac = frac[:6]
+        normalized = f"{match.group('date')}T{match.group('time')}"
+        if frac:
+            normalized += f".{frac}"
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class FraudDetector:
@@ -56,8 +89,10 @@ class FraudDetector:
         if df.empty:
             return pd.DataFrame(columns=["amount", "time_diff_minutes", "hour_of_day", "is_weekend"])
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        df = df.sort_values("timestamp").dropna(subset=["timestamp"])
+        df["timestamp"] = df["timestamp"].apply(
+            lambda v: parse_timestamp(v) if not isinstance(v, datetime) else v
+        )
+        df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
 
         # Sắp xếp giảm dần (mới nhất trước) rồi tính time_diff so với giao dịch kế tiếp
         df = df.iloc[::-1].reset_index(drop=True)
@@ -124,17 +159,18 @@ class FraudDetector:
 
         # Tần suất giao dịch liên tiếp
         try:
-            times = [
-                datetime.fromisoformat(c.get("timestamp") or "")
-                for c in context
-                if c.get("timestamp")
-            ]
-            times.sort()
-            # Tìm 2 giao dịch gần nhau nhất chứa tx này
-            current_ts = datetime.fromisoformat(tx.get("timestamp") or "")
-            diffs = [abs((current_ts - t).total_seconds() / 60.0) for t in times if t != current_ts]
-            if diffs and min(diffs) < 1.0:
-                rules.append("Nhiều giao dịch trong vòng 1 phút")
+            times = sorted(
+                ts for c in context if (ts := parse_timestamp(c.get("timestamp"))) is not None
+            )
+            current_ts = parse_timestamp(tx.get("timestamp"))
+            if current_ts and times:
+                diffs = [
+                    abs((current_ts - t).total_seconds() / 60.0)
+                    for t in times
+                    if t != current_ts
+                ]
+                if diffs and min(diffs) < 1.0:
+                    rules.append("Nhiều giao dịch trong vòng 1 phút")
         except (ValueError, TypeError):
             pass
 
@@ -195,8 +231,8 @@ class FraudDetector:
         # 2. Tần suất giao dịch
         now = datetime.now()
         try:
-            last_ts = datetime.fromisoformat(user_transactions[-1]["timestamp"])
-            hours_since = max(0.0, (now - last_ts).total_seconds() / 3600.0)
+            last_ts = parse_timestamp(user_transactions[-1].get("timestamp"))
+            hours_since = max(0.0, (now - last_ts).total_seconds() / 3600.0) if last_ts else 24.0
         except (ValueError, TypeError):
             hours_since = 24.0
 

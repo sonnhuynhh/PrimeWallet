@@ -117,7 +117,8 @@ services:
     image: redis:7-alpine
     container_name: redis
     ports:
-      - "6379:6379"
+      # Windows Hyper-V thường reserve 6054–6853 (gồm 6379) → map host 16379
+      - "16379:6379"
     # Fix #29: Bật mật khẩu Redis khi biến REDIS_PASSWORD được đặt.
     # Để trống (mặc định) → không auth, giữ nguyên trải nghiệm local dev.
     # $$REDIS_PASSWORD: $$ được Compose escape thành $ → shell trong container

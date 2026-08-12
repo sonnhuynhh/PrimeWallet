@@ -1,0 +1,40 @@
+@startuml Hinh_2_2_State_JWT_Login
+title Hình 2.2 – State Diagram: Quy trình Đăng nhập JWT
+skinparam state {
+  BackgroundColor #F8F9FA
+  BorderColor #333
+}
+
+[*] --> ChuaDangNhap : Mở ứng dụng
+
+state ChuaDangNhap {
+}
+
+ChuaDangNhap --> DangNhap : Nhập email/password\nPOST /auth/login
+DangNhap --> XacThucThatBai : Sai thông tin\n(401)
+XacThucThatBai --> ChuaDangNhap : Thử lại
+
+DangNhap --> DaCoToken : AuthService.authenticate()\n+ tạo accessToken\n+ lưu refreshToken
+
+state DaCoToken {
+  state "Access Token hợp lệ" as ValidAccess
+  state "Access Token hết hạn" as ExpiredAccess
+  ValidAccess --> ExpiredAccess : JWT expired (15 phút)
+  ExpiredAccess --> ValidAccess : POST /auth/refresh\n(refreshToken hợp lệ)
+  ExpiredAccess --> ChuaDangNhap : Refresh thất bại\n/xóa token client
+}
+
+DaCoToken --> GoiAPIBaoVe : Gọi API có Bearer JWT\n(JwtAuthenticationFilter)
+GoiAPIBaoVe --> DaCoToken : 200 OK
+GoiAPIBaoVe --> HetPhien : 401 Unauthorized
+
+HetPhien --> ChuaDangNhap : Đăng xuất / xóa token
+
+DaCoToken --> ChuaDangNhap : User LOCKED\n(AccountLockedException)
+
+note right of DaCoToken
+  Stateless: không dùng server session
+  Mỗi request tự mang JWT
+end note
+
+@enduml

@@ -38,6 +38,9 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Layers,
+  AlertTriangle,
+  Shield,
+  WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -50,8 +53,9 @@ import {
   getAdminCryptoHistory,
   getAdminTransactions,
   getAdminStats,
+  getAdminFraudReport,
 } from '../services/admin';
-import type { AdminUserResponse, Page, AdminStats } from '../services/admin';
+import type { AdminUserResponse, Page, AdminStats, FraudReport, FraudRiskLevel } from '../services/admin';
 import type { EtherscanTransaction } from '../services/crypto';
 import type { AuditLogResponse, TransactionResponse } from '../types/api';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -73,7 +77,7 @@ import { isAddress } from 'viem';
 import { NetworkIcon } from '@/components/ui/NetworkIcon';
 import { cn } from '@/lib/utils';
 
-type AdminTab = 'users' | 'logs' | 'crypto' | 'transactions';
+type AdminTab = 'users' | 'logs' | 'crypto' | 'transactions' | 'fraud';
 
 const CRYPTO_NETWORKS: { id: NetworkId; label: string }[] = [
   { id: 'eth_sepolia', label: 'Ethereum Sepolia' },
@@ -86,6 +90,7 @@ const CRYPTO_NETWORKS: { id: NetworkId; label: string }[] = [
 const TABS: readonly TabItem<AdminTab>[] = [
   { id: 'users', label: 'Người dùng', icon: Users },
   { id: 'transactions', label: 'Giao dịch', icon: ArrowLeftRight },
+  { id: 'fraud', label: 'Báo cáo gian lận', icon: AlertTriangle },
   { id: 'logs', label: 'Nhật ký hoạt động', icon: FileText },
   { id: 'crypto', label: 'Tra cứu Blockchain', icon: Bitcoin },
 ];
@@ -292,6 +297,11 @@ export function AdminDashboard() {
   const [cryptoLoading, setCryptoLoading] = useState(false);
   const [searchedAddress, setSearchedAddress] = useState('');
 
+  // Tab báo cáo gian lận
+  const [fraudReport, setFraudReport] = useState<FraudReport | null>(null);
+  const [fraudLevel, setFraudLevel] = useState<FraudRiskLevel>('SAFE');
+  const [fraudLoading, setFraudLoading] = useState(false);
+
   // Tìm kiếm từng tab
   const [userQuery, setUserQuery] = useState('');
   const [logQuery, setLogQuery] = useState('');
@@ -400,12 +410,52 @@ export function AdminDashboard() {
     }
   };
 
+  const loadFraudReport = async (level: FraudRiskLevel = fraudLevel) => {
+    try {
+      setFraudLoading(true);
+      const report = await getAdminFraudReport(level, 100);
+      setFraudReport(report);
+    } catch (e) {
+      toastErr(e, 'Không tải được báo cáo gian lận');
+      setFraudReport(null);
+    } finally {
+      setFraudLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'crypto') return; // tab crypto tự tìm kiếm, không nạp sẵn
+    if (activeTab === 'fraud') {
+      loadFraudReport();
+      return;
+    }
     if (activeTab === 'transactions') loadStats();
     fetchData(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  const handleFraudLock = async (userId: string, email: string | null | undefined, status?: string | null) => {
+    const locking = status !== 'LOCKED';
+    const label = email || userId;
+    const ok = await confirm({
+      title: locking ? 'Khoá tài khoản rủi ro?' : 'Mở khoá tài khoản?',
+      message: locking
+        ? `${label} đang có điểm rủi ro cao. Khoá sẽ chặn giao dịch cho tới khi mở lại.`
+        : `${label} sẽ được mở khoá và giao dịch bình thường.`,
+      confirmText: locking ? 'Khoá ngay' : 'Mở khoá',
+      variant: locking ? 'danger' : 'primary',
+    });
+    if (!ok) return;
+
+    try {
+      if (locking) await lockUser(userId);
+      else await unlockUser(userId);
+      toastOk(locking ? 'Đã khoá tài khoản' : 'Đã mở khoá tài khoản');
+      await loadFraudReport();
+    } catch (e) {
+      toastErr(e, locking ? 'Không khoá được tài khoản' : 'Không mở khoá được tài khoản');
+    }
+  };
 
   const handleToggleLock = async (user: AdminUserResponse) => {
     const locking = user.status !== 'LOCKED';
@@ -512,6 +562,201 @@ export function AdminDashboard() {
         </div>
 
         <TabBar tabs={TABS} value={activeTab} onChange={setActiveTab} layoutId="admin-tab" />
+
+        {activeTab === 'fraud' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              <StatTile
+                icon={Users}
+                label="Đã quét"
+                value={fmtNumber(fraudReport?.total_users_scanned ?? 0, 0)}
+                iconClassName="bg-sky-500/15 text-sky-400"
+              />
+              <StatTile
+                icon={ShieldAlert}
+                label="Rủi ro cao"
+                value={fmtNumber(fraudReport?.summary?.high ?? 0, 0)}
+                tone="text-rose-400"
+                iconClassName="bg-rose-500/15 text-rose-400"
+              />
+              <StatTile
+                icon={AlertTriangle}
+                label="Cần chú ý"
+                value={fmtNumber(fraudReport?.summary?.medium ?? 0, 0)}
+                tone="text-amber-400"
+                iconClassName="bg-amber-500/15 text-amber-400"
+              />
+              <StatTile
+                icon={ShieldCheck}
+                label="An toàn"
+                value={fmtNumber(fraudReport?.summary?.safe ?? 0, 0)}
+                tone="text-emerald-400"
+                iconClassName="bg-emerald-500/15 text-emerald-400"
+              />
+            </div>
+
+            <Card>
+              <CardHeader
+                title="Báo cáo gian lận AI"
+                description="Điểm rủi ro IsolationForest + rule-based trên giao dịch fiat đã ingest vào AI service."
+                icon={<Shield className="h-5 w-5" />}
+                action={
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={fraudLevel}
+                      onChange={(e) => {
+                        const next = e.target.value as FraudRiskLevel;
+                        setFraudLevel(next);
+                        loadFraudReport(next);
+                      }}
+                      className="h-10 rounded-xl border border-[--color-border] bg-slate-900/80 px-3 text-sm text-slate-300 outline-none"
+                    >
+                      <option value="SAFE">Tất cả mức</option>
+                      <option value="MEDIUM">Từ mức cần chú ý</option>
+                      <option value="HIGH">Chỉ rủi ro cao</option>
+                    </select>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      loading={fraudLoading}
+                      onClick={() => loadFraudReport()}
+                    >
+                      <RefreshCw className="h-4 w-4" /> Làm mới
+                    </Button>
+                  </div>
+                }
+              />
+
+              {fraudReport?.available === false && (
+                <div className="mb-4 flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+                  <WifiOff className="h-8 w-8 shrink-0 text-slate-500" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-300">AI service chưa sẵn sàng</p>
+                    <p className="text-xs text-slate-500">
+                      {fraudReport.error || fraudReport.message || 'Khởi động AI microservice (port 8000).'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {fraudReport?.model_trained === false && fraudReport?.available !== false && (
+                <p className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+                  Mô hình AI chưa train đủ dữ liệu — đang dùng rule-based. Cần ≥ 10 giao dịch để IsolationForest hoạt động tốt.
+                </p>
+              )}
+
+              <div className="max-h-130 overflow-x-auto overflow-y-auto rounded-2xl border border-[--color-border]">
+                <table className="w-full border-collapse">
+                  <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+                    <tr className="border-b border-[--color-border]">
+                      <ThIcon icon={User}>Người dùng</ThIcon>
+                      <ThIcon icon={Activity}>Điểm rủi ro</ThIcon>
+                      <ThIcon icon={AlertTriangle}>Yếu tố</ThIcon>
+                      <ThIcon icon={ReceiptText}>GD / Bất thường</ThIcon>
+                      <ThIcon icon={Shield}>Trạng thái</ThIcon>
+                      <ThIcon icon={Lock}>Thao tác</ThIcon>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {fraudLoading && (
+                      <tr>
+                        <td colSpan={6} className="px-4">
+                          <SkeletonRow />
+                          <SkeletonRow />
+                          <SkeletonRow />
+                        </td>
+                      </tr>
+                    )}
+
+                    {!fraudLoading &&
+                      (fraudReport?.users ?? []).map((row) => {
+                        const level = row.level || 'SAFE';
+                        const tone =
+                          level === 'HIGH'
+                            ? 'text-rose-400 border-rose-500/30 bg-rose-500/10'
+                            : level === 'MEDIUM'
+                              ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+                              : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
+                        return (
+                          <tr key={row.user_id} className="transition-colors hover:bg-white/3">
+                            <td className="p-4">
+                              <p className="font-semibold text-white">{row.fullName || '—'}</p>
+                              <p className="text-xs text-slate-400">{row.email || row.user_id.slice(0, 8) + '…'}</p>
+                            </td>
+                            <td className="p-4">
+                              <div className={cn('inline-flex flex-col rounded-xl border px-3 py-2', tone)}>
+                                <span className="text-lg font-black">
+                                  {fmtNumber(row.score ?? 0, 1)}
+                                  <span className="text-xs font-bold text-slate-400">/100</span>
+                                </span>
+                                <span className="text-[11px] font-bold">{row.label || level}</span>
+                              </div>
+                            </td>
+                            <td className="p-4 max-w-xs">
+                              {(row.factors ?? []).length === 0 ? (
+                                <span className="text-xs text-slate-500">—</span>
+                              ) : (
+                                <ul className="space-y-1">
+                                  {(row.factors ?? []).slice(0, 3).map((f, i) => (
+                                    <li key={i} className="text-[11px] text-slate-400">
+                                      • {f}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
+                            <td className="p-4 text-sm text-slate-300">
+                              {fmtNumber(row.transaction_count ?? 0, 0)} GD
+                              {(row.anomalies ?? 0) > 0 && (
+                                <span className="ml-2 font-bold text-rose-400">
+                                  {row.anomalies} bất thường
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              {row.status ? <StatusBadge status={row.status} /> : <span className="text-slate-500">—</span>}
+                            </td>
+                            <td className="p-4">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                fullWidth={false}
+                                onClick={() => handleFraudLock(row.user_id, row.email, row.status)}
+                                className={
+                                  row.status === 'LOCKED'
+                                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                                    : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                                }
+                              >
+                                {row.status === 'LOCKED' ? (
+                                  <>
+                                    <Unlock className="h-3.5 w-3.5" /> Mở khoá
+                                  </>
+                                ) : (
+                                  <>
+                                    <Lock className="h-3.5 w-3.5" /> Khoá
+                                  </>
+                                )}
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+
+                    {!fraudLoading && !(fraudReport?.users?.length) && fraudReport?.available !== false && (
+                      <EmptyRow
+                        colSpan={6}
+                        icon={ShieldCheck}
+                        message="Chưa có user nào trong báo cáo — chờ giao dịch fiat được ingest vào AI"
+                      />
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+        )}
 
         {activeTab === 'crypto' && (
           <Card>

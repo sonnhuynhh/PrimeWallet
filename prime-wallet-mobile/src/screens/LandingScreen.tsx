@@ -8,6 +8,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { AuroraBackground } from "../components/effects/AuroraBackground";
 import { BorderBeam } from "../components/effects/BorderBeam";
 import { CountUp } from "../components/marketing/CountUp";
+import { ShellProvider } from "../context/ShellContext";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { shellTheme } from "../theme/tokens";
@@ -29,6 +30,7 @@ export function LandingScreen({ navigation }: Props) {
   const theme = shellTheme.crypto;
 
   return (
+    <ShellProvider shell="crypto">
     <View className="flex-1 bg-background">
       <AuroraBackground />
       <LinearGradient
@@ -167,5 +169,6 @@ export function LandingScreen({ navigation }: Props) {
         </Text>
       </ScrollView>
     </View>
+    </ShellProvider>
   );
 }

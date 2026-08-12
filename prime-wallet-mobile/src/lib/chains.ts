@@ -37,6 +37,14 @@ export const NETWORK_LABELS: Record<string, string> = {
   base_mainnet: "Base",
 };
 
+export const NATIVE_SYMBOLS: Record<string, string> = {
+  eth_sepolia: "ETH",
+  eth_mainnet: "ETH",
+  bsc_mainnet: "BNB",
+  polygon_mainnet: "POL",
+  base_mainnet: "ETH",
+};
+
 export const FALLBACK_RPC: Record<string, string> = {
   eth_sepolia: "https://ethereum-sepolia-rpc.publicnode.com",
   eth_mainnet: "https://eth.llamarpc.com",
@@ -56,9 +64,9 @@ export const EXPLORER_TX: Record<string, string> = {
 export const EXPLORER_V2_API: Record<NetworkId, string> = {
   eth_mainnet: "https://api.etherscan.io/v2/api",
   eth_sepolia: "https://api.etherscan.io/v2/api",
-  bsc_mainnet: "https://api.bscscan.com/v2/api",
-  polygon_mainnet: "https://api.polygonscan.com/v2/api",
-  base_mainnet: "https://api.basescan.org/v2/api",
+  bsc_mainnet: "https://api.etherscan.io/v2/api",
+  polygon_mainnet: "https://api.etherscan.io/v2/api",
+  base_mainnet: "https://api.etherscan.io/v2/api",
 };
 
 export const SUPPORTS_LOG_SCAN: Record<NetworkId, boolean> = {
@@ -94,6 +102,10 @@ export function explorerV2ApiOf(networkId: string): string {
 
 export function networkLabel(id: string) {
   return NETWORK_LABELS[normalizeNetworkId(id)] ?? id;
+}
+
+export function nativeSymbolOf(networkId: string): string {
+  return NATIVE_SYMBOLS[normalizeNetworkId(networkId)] ?? "ETH";
 }
 
 export function rpcOf(networkId: string, override?: string) {

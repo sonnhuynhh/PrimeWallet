@@ -2,21 +2,21 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Linking, Text, TouchableOpacity, View } from "react-native";
 import { ethers } from "ethers";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
 
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
-import { Screen } from "../components/ui/Screen";
+import { EmptyState } from "../components/ui/EmptyState";
 import { useAuth } from "../context/AuthContext";
 import { getTransactionHistory } from "../services/wallet";
 import { getLinkedWallets, getWalletHistory, type EtherscanTransaction } from "../services/crypto";
-import { fmtNumber, fmtVnd } from "../lib/utils";
-import { txExplorerUrl } from "../lib/chains";
+import { fmtVnd } from "../lib/utils";
+import { nativeSymbolOf, txExplorerUrl } from "../lib/chains";
+import { fetchOnChainTransactions, normalizeEtherscanResult } from "../lib/onchain/history";
+import { ETHERSCAN_API_KEY } from "../config/env";
 import type { TransactionResponse } from "../types/api";
 
 export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
   const { session, activeWalletMode } = useAuth();
-  const navigation = useNavigation<any>();
   const mode = embedded ? "crypto" : activeWalletMode;
 
   const [fiatItems, setFiatItems] = useState<TransactionResponse[]>([]);
@@ -53,7 +53,16 @@ export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
       if (wallet) {
         setNetwork(wallet.blockchainNetwork.toLowerCase());
         const response = await getWalletHistory(wallet.id);
-        setCryptoItems(Array.isArray(response.result) ? response.result : []);
+        let rows = normalizeEtherscanResult(response.result);
+        if (rows.length === 0) {
+          const fallback = await fetchOnChainTransactions(
+            wallet.blockchainNetwork,
+            wallet.walletAddress,
+            ETHERSCAN_API_KEY || undefined,
+          );
+          if (fallback.length > 0) rows = fallback;
+        }
+        setCryptoItems(rows);
       }
     } finally {
       setCryptoLoading(false);
@@ -61,76 +70,77 @@ export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
   };
 
   if (!mode) {
+    return <EmptyState icon="history" title="Chưa chọn ví" description="Chọn loại ví để xem lịch sử." />;
+  }
+
+  if (mode === "fiat") {
+    if (fiatLoading) return <ActivityIndicator color="#21c95e" className="mt-8" />;
     return (
-      <Screen>
-        <View className="flex-1 items-center justify-center px-8">
-          <Text className="text-center text-muted-foreground">Chưa chọn loại ví.</Text>
-        </View>
-      </Screen>
+      <FlatList
+        data={fiatItems}
+        keyExtractor={(item) => item.id}
+        className="flex-1 px-4 py-4"
+        scrollEnabled={!embedded}
+        contentContainerStyle={{ gap: 10, paddingBottom: 24, flexGrow: 1 }}
+        renderItem={({ item }) => (
+          <Card className="gap-2">
+            <View className="flex-row items-center justify-between">
+              <Text className="font-bold text-white">{item.transactionType}</Text>
+              <Badge variant={item.status === "SUCCESS" ? "success" : item.status === "FAILED" ? "danger" : "warning"}>
+                {item.status}
+              </Badge>
+            </View>
+            <Text className="text-xs text-muted-foreground">{item.referenceNumber}</Text>
+            <Text
+              className={`font-extrabold ${
+                item.transactionType === "TOPUP"
+                  ? "text-success"
+                  : item.transactionType === "WITHDRAW"
+                    ? "text-destructive"
+                    : "text-white"
+              }`}
+            >
+              {item.transactionType === "TOPUP" ? "+" : item.transactionType === "WITHDRAW" ? "-" : ""}
+              {fmtVnd(item.amount)}
+            </Text>
+          </Card>
+        )}
+        ListEmptyComponent={
+          <EmptyState icon="history" title="Chưa có giao dịch" description="Lịch sử chuyển tiền và nạp rút sẽ hiện ở đây." />
+        }
+      />
     );
   }
 
-  const content = (
-    <View className={`flex-1 gap-4 ${embedded ? "px-4 py-4" : "py-4"}`}>
-      {!embedded ? (
-        <Text className="text-2xl font-extrabold text-white">Lịch sử giao dịch</Text>
-      ) : null}
+  if (cryptoLoading) return <ActivityIndicator color="#fc72ff" className="mt-8" />;
 
-      {mode === "fiat" ? (
-        fiatLoading ? (
-          <ActivityIndicator color="#21c95e" />
-        ) : (
-          <FlatList
-            data={fiatItems}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={!embedded}
-            contentContainerStyle={{ gap: 10, paddingBottom: 24 }}
-            renderItem={({ item }) => (
-              <Card className="gap-2">
-                <View className="flex-row items-center justify-between">
-                  <Text className="font-bold text-white">{item.transactionType}</Text>
-                  <Badge variant={item.status === "SUCCESS" ? "success" : item.status === "FAILED" ? "danger" : "warning"}>{item.status}</Badge>
-                </View>
-                <Text className="text-xs text-muted-foreground">{item.referenceNumber}</Text>
-                <Text className={`font-extrabold ${item.transactionType === "TOPUP" ? "text-emerald-400" : item.transactionType === "WITHDRAW" ? "text-rose-400" : "text-white"}`}>
-                  {item.transactionType === "TOPUP" ? "+" : item.transactionType === "WITHDRAW" ? "-" : ""}
-                  {fmtVnd(item.amount)}
-                </Text>
-              </Card>
-            )}
-            ListEmptyComponent={<Text className="text-muted-foreground">Chưa có giao dịch.</Text>}
-          />
-        )
-      ) : cryptoLoading ? (
-        <ActivityIndicator color="#fc72ff" />
-      ) : (
-        <FlatList
-          data={cryptoItems}
-          keyExtractor={(item) => item.hash}
-          scrollEnabled={!embedded}
-          contentContainerStyle={{ gap: 10, paddingBottom: 24 }}
-          renderItem={({ item }) => {
-            const ethValue = ethers.formatEther(item.value);
-            const date = new Date(parseInt(item.timeStamp, 10) * 1000).toLocaleString("vi-VN");
-            return (
-              <TouchableOpacity onPress={() => Linking.openURL(txExplorerUrl(network, item.hash))}>
-                <Card className="gap-2">
-                  <View className="flex-row items-center justify-between">
-                    <Text className="font-bold text-white">Chuyển ETH</Text>
-                    <MaterialCommunityIcons name="open-in-new" size={16} color="#9b9b9b" />
-                  </View>
-                  <Text className="text-xs text-muted-foreground">{date}</Text>
-                  <Text className="font-extrabold text-primary">{ethValue} ETH</Text>
-                </Card>
-              </TouchableOpacity>
-            );
-          }}
-          ListEmptyComponent={<Text className="text-muted-foreground">Chưa có giao dịch on-chain.</Text>}
-        />
-      )}
-    </View>
+  return (
+    <FlatList
+      data={cryptoItems}
+      keyExtractor={(item) => item.hash}
+      className="flex-1 px-4 py-4"
+      scrollEnabled={!embedded}
+      contentContainerStyle={{ gap: 10, paddingBottom: 24, flexGrow: 1 }}
+      renderItem={({ item }) => {
+        const ethValue = ethers.formatEther(item.value);
+        const sym = nativeSymbolOf(network);
+        const date = new Date(parseInt(item.timeStamp, 10) * 1000).toLocaleString("vi-VN");
+        return (
+          <TouchableOpacity onPress={() => Linking.openURL(txExplorerUrl(network, item.hash))}>
+            <Card className="gap-2">
+              <View className="flex-row items-center justify-between">
+                <Text className="font-bold text-white">Chuyển ETH</Text>
+                <MaterialCommunityIcons name="open-in-new" size={16} color="#9b9b9b" />
+              </View>
+              <Text className="text-xs text-muted-foreground">{date}</Text>
+              <Text className="font-extrabold text-primary">{ethValue} {sym}</Text>
+            </Card>
+          </TouchableOpacity>
+        );
+      }}
+      ListEmptyComponent={
+        <EmptyState icon="history" title="Chưa có giao dịch" description="Giao dịch on-chain sẽ hiện ở đây." />
+      }
+    />
   );
-
-  if (embedded) return content;
-  return <Screen>{content}</Screen>;
 }

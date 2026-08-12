@@ -1,0 +1,49 @@
+@startuml Hinh_2_15_UseCase_Tong_Quan
+title Hình 2.15 – Use Case: Tổng quan hệ thống PrimeWallet
+left to right direction
+skinparam actorStyle awesome
+
+actor "Người dùng\n(User)" as User
+actor "Admin" as Admin
+actor "VNPay" as VNPay
+actor "Blockchain\n(ETH/BSC/...)" as Chain
+
+rectangle "PrimeWallet System" {
+  usecase "Đăng ký / Đăng nhập" as UC_Auth
+  usecase "Quản lý hồ sơ & KYC" as UC_Profile
+  usecase "Xem số dư Fiat" as UC_Balance
+  usecase "Nạp tiền VNPay" as UC_Topup
+  usecase "Chuyển / Rút Fiat" as UC_Transfer
+  usecase "Quản lý ví Crypto" as UC_CryptoWallet
+  usecase "Gửi / Nhận Crypto" as UC_CryptoTx
+  usecase "Swap / Bridge token" as UC_Swap
+  usecase "Xem NFT" as UC_NFT
+  usecase "Xem lịch sử giao dịch" as UC_History
+  usecase "AI Insights & Risk Score" as UC_AI
+  usecase "Quản trị hệ thống" as UC_Admin
+}
+
+User --> UC_Auth
+User --> UC_Profile
+User --> UC_Balance
+User --> UC_Topup
+User --> UC_Transfer
+User --> UC_CryptoWallet
+User --> UC_CryptoTx
+User --> UC_Swap
+User --> UC_NFT
+User --> UC_History
+User --> UC_AI
+
+Admin --> UC_Admin
+Admin --> UC_Profile
+
+UC_Topup ..> VNPay : Thanh toán
+UC_CryptoTx ..> Chain : On-chain tx
+UC_CryptoWallet ..> Chain : Đọc balance
+
+UC_Transfer ..> UC_Balance : Cập nhật số dư
+UC_Topup ..> UC_Balance : Cộng tiền
+UC_AI ..> UC_History : Phân tích lịch sử
+
+@enduml

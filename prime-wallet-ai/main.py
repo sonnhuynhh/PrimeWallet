@@ -1,24 +1,14 @@
 """
 PrimeWallet AI Microservice — Phân tích chi tiêu & phát hiện gian lận.
-
-Kiến trúc:
-- Kafka consumer (background thread) lắng nghe topic "wallet.transactions"
-  từ Java backend → lưu vào SQLite
-- FraudDetector (Isolation Forest) — persist bằng joblib, retrain tự động
-- SpendingAnalyzer — phân loại chi tiêu + sinh insights tiếng Việt
-
-API:
-- GET  /                       → health check
-- GET  /api/ai/health          → trạng thái service (kafka, model, data)
-- GET  /api/ai/users/{uid}/insights      → insights chi tiêu
-- GET  /api/ai/users/{uid}/risk-score    → điểm rủi ro 0-100
-- GET  /api/ai/users/{uid}/transactions  → giao dịch AI đã thấy
-- POST /api/ai/train-fraud-model         → train thủ công (legacy)
-- POST /api/ai/detect-fraud              → detect (legacy)
-- POST /api/ai/analyze-spending          → phân tích (legacy)
-
-Chạy: uvicorn main:app --host 0.0.0.0 --port 8000
+...
 """
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
@@ -112,7 +102,7 @@ def ai_health():
         },
         "data": {
             "total_transactions": transaction_store.count_transactions(),
-            "total_users": len(transaction_store.get_all_transactions(limit=10000)),
+            "total_users": len(transaction_store.list_user_ids()),
         },
         "time": datetime.utcnow().isoformat(),
     }
@@ -142,6 +132,86 @@ def get_ai_transactions(user_id: str, limit: int = 100):
         "count": len(txs),
         "transactions": txs,
     }
+
+
+@app.get("/api/ai/users/{user_id}/count")
+def get_user_tx_count(user_id: str):
+    return {"user_id": user_id, "count": transaction_store.count_transactions(user_id)}
+
+
+@app.get("/api/ai/fraud-report")
+def get_fraud_report(min_level: Optional[str] = None, limit: int = 100):
+    """
+    Báo cáo rủi ro gian lận toàn hệ thống (dành cho Admin).
+
+    min_level: SAFE | MEDIUM | HIGH — chỉ trả user đạt mức tối thiểu
+               (HIGH ⊂ MEDIUM ⊂ SAFE theo thứ tự nghiêm trọng).
+    """
+    level_rank = {"SAFE": 0, "MEDIUM": 1, "HIGH": 2}
+    min_rank = level_rank.get((min_level or "SAFE").upper(), 0)
+    user_ids = transaction_store.list_user_ids()
+    entries = []
+
+    for uid in user_ids:
+        txs = transaction_store.get_transactions(uid, limit=200)
+        risk = fraud_detector.risk_score(txs)
+        level = str(risk.get("level") or "SAFE").upper()
+        if level_rank.get(level, 0) < min_rank:
+            continue
+        entries.append(
+            {
+                "user_id": uid,
+                "transaction_count": len(txs),
+                "score": risk.get("score", 0),
+                "level": level,
+                "label": risk.get("label"),
+                "factors": risk.get("factors") or [],
+                "anomalies": risk.get("anomalies", 0),
+                "model_trained": risk.get("model_trained", False),
+            }
+        )
+
+    entries.sort(key=lambda e: float(e.get("score") or 0), reverse=True)
+    capped = entries[: max(1, min(limit, 500))]
+
+    high = sum(1 for e in entries if e["level"] == "HIGH")
+    medium = sum(1 for e in entries if e["level"] == "MEDIUM")
+    safe = sum(1 for e in entries if e["level"] == "SAFE")
+
+    return {
+        "available": True,
+        "model_trained": fraud_detector.is_trained,
+        "total_users_scanned": len(user_ids),
+        "summary": {
+            "high": high,
+            "medium": medium,
+            "safe": safe,
+            "total": len(entries),
+        },
+        "users": capped,
+    }
+
+
+class IngestEventsRequest(BaseModel):
+    events: List[dict]
+
+
+@app.post("/api/ai/users/{user_id}/ingest")
+def ingest_user_events(user_id: str, body: IngestEventsRequest):
+    """Đồng bộ giao dịch fiat từ Java backend (khi Kafka/AI khởi động muộn)."""
+    ingested = 0
+    for event in body.events:
+        payload = dict(event)
+        payload["userId"] = user_id
+        if transaction_store.save_event(payload):
+            ingested += 1
+
+    total = transaction_store.count_transactions(user_id)
+    all_txs = transaction_store.get_all_transactions()
+    if len(all_txs) >= 10:
+        fraud_detector.train(all_txs)
+
+    return {"user_id": user_id, "ingested": ingested, "total": total}
 
 
 # ==================== LEGACY API ====================

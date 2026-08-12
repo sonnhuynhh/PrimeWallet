@@ -4,26 +4,10 @@ import type { ApiResponse, AuthResponse } from "../types/api";
 
 type RequestOptions = RequestInit & {
   skipAuth?: boolean;
-  /** Nội bộ: đánh dấu request đã được thử lại sau refresh (tránh lặp vô hạn). */
   _isRetry?: boolean;
 };
 
-/**
- * Fix #7: Single-flight token refresh.
- *
- * Khi access token hết hạn (15 phút), backend trả 401. Trước đây app đăng xuất
- * người dùng ngay cả khi refresh token (7 ngày) vẫn còn hiệu lực.
- *
- * Giờ ta bắt 401 → gọi /auth/refresh → thử lại request gốc.
- * Dùng biến `refreshPromise` để nếu NHIỀU request cùng nhận 401 một lúc,
- * chỉ có ĐÚNG MỘT lần gọi refresh; các request khác chờ chung kết quả đó.
- */
 let refreshPromise: Promise<string | null> | null = null;
-
-/**
- * Callback được AuthContext đăng ký để khi refresh thất bại (refresh token hết hạn),
- * app tự đăng xuất và điều hướng về màn Login.
- */
 let onAuthFailure: (() => void) | null = null;
 
 export function setOnAuthFailure(handler: (() => void) | null) {
@@ -32,22 +16,20 @@ export function setOnAuthFailure(handler: (() => void) | null) {
 
 async function refreshAccessToken(): Promise<string | null> {
   const { refreshToken } = await getTokens();
-  if (!refreshToken) {
-    return null;
-  }
+  if (!refreshToken) return null;
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      },
       body: JSON.stringify({ refreshToken }),
     });
 
-    const payload = (await response.json()) as ApiResponse<AuthResponse>;
-
-    if (!response.ok || !payload.success || !payload.data) {
-      return null;
-    }
+    const payload = await parseJsonResponse<ApiResponse<AuthResponse>>(response);
+    if (!response.ok || !payload.success || !payload.data) return null;
 
     await saveTokens(payload.data.accessToken, payload.data.refreshToken);
     return payload.data.accessToken;
@@ -57,7 +39,6 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 async function performRefresh(): Promise<string | null> {
-  // Nếu đang có một lần refresh chạy dở, dùng chung promise đó.
   if (!refreshPromise) {
     refreshPromise = refreshAccessToken().finally(() => {
       refreshPromise = null;
@@ -66,38 +47,45 @@ async function performRefresh(): Promise<string | null> {
   return refreshPromise;
 }
 
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.startsWith("<")) {
+    throw new Error(
+      response.status === 404
+        ? "API không tìm thấy — kiểm tra EXPO_PUBLIC_API_BASE_URL và backend đang chạy."
+        : "Server trả về HTML thay vì JSON — kiểm tra URL ngrok/LAN.",
+    );
+  }
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    throw new Error("Phản hồi API không hợp lệ (không phải JSON).");
+  }
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
+  headers.set("ngrok-skip-browser-warning", "true");
 
   if (!options.skipAuth) {
     const { accessToken } = await getTokens();
-    if (accessToken) {
-      headers.set("Authorization", `Bearer ${accessToken}`);
-    }
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
 
-  // Fix #7: Bắt 401 → thử refresh token rồi retry (chỉ 1 lần, và không áp dụng
-  // cho chính request có skipAuth như login/register/refresh).
   if (response.status === 401 && !options.skipAuth && !options._isRetry) {
     const newAccessToken = await performRefresh();
+    if (newAccessToken) return request<T>(path, { ...options, _isRetry: true });
 
-    if (newAccessToken) {
-      return request<T>(path, { ...options, _isRetry: true });
-    }
-
-    // Refresh thất bại → xoá token và báo cho app đăng xuất.
     await clearTokens();
     onAuthFailure?.();
     throw new Error("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
   }
 
-  const payload = (await response.json()) as ApiResponse<T>;
+  const payload = await parseJsonResponse<ApiResponse<T>>(response);
 
   if (!response.ok || !payload.success) {
     throw new Error(payload.message || "Request failed");

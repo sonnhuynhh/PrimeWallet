@@ -2,8 +2,6 @@ import type { ReactNode } from "react";
 import { Text, TextInput, View, type KeyboardTypeOptions } from "react-native";
 
 import { colors } from "../../theme/tokens";
-import { useShell } from "../../context/ShellContext";
-import { shellTheme } from "../../theme/tokens";
 
 type InputProps = {
   label?: string;
@@ -34,9 +32,6 @@ export function Input({
   prefix,
   editable = true,
 }: InputProps) {
-  const shell = useShell();
-  const theme = shellTheme[shell];
-
   return (
     <View className="w-full gap-2">
       {label ? (

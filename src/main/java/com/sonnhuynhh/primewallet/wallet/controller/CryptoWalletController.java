@@ -210,6 +210,19 @@ public class CryptoWalletController {
     }
 
     /**
+     * Lịch sử chuyển nhượng ERC-721 từ explorer (Etherscan V2 đa chuỗi).
+     */
+    @GetMapping("/{walletId}/nfts")
+    public ResponseEntity<ApiResponse<NftTransfersResponse>> getWalletNfts(
+            Authentication authentication,
+            @PathVariable UUID walletId) {
+
+        UUID userId = getUserId(authentication);
+        return ResponseEntity.ok(ApiResponse.success("Danh sách NFT",
+                cryptoWalletService.getWalletNftTransfers(userId, walletId)));
+    }
+
+    /**
      * Lịch sử giao dịch user thực hiện trong app (phân trang).
      */
     @GetMapping("/{walletId}/transactions")

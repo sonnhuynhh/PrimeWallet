@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { ethers } from "ethers";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { Button } from "../../ui/Button";
-import { Card } from "../../ui/Card";
+import { Card, CardHeader } from "../../ui/Card";
 import { Input } from "../../ui/Input";
+import { EmptyState } from "../../ui/EmptyState";
+import { CryptoTabShell } from "../CryptoTabShell";
+import { TokenChipRow } from "../TokenChipRow";
 import { toastErr, toastOk } from "../../feedback/toast";
 import { clampDecimals, fmtNumber } from "../../../lib/utils";
 import { useCrypto } from "../../../context/CryptoContext";
@@ -13,8 +17,10 @@ import { getPrivateKey } from "../../../storage/secureKeyStore";
 import { rpcOf } from "../../../lib/chains";
 import type { TokenBalance } from "../../../types/crypto";
 import type { EstimateGasData } from "../../../types/crypto";
+import { shellTheme } from "../../../theme/tokens";
 
 export function SendTab() {
+  const theme = shellTheme.crypto;
   const { activeWallet, activeNetwork, balance, tokenRows, loadBalance } = useCrypto();
   const [token, setToken] = useState<TokenBalance | null>(null);
   const [to, setTo] = useState("");
@@ -25,9 +31,9 @@ export function SendTab() {
 
   if (!activeWallet) {
     return (
-      <Card className="mx-4 my-4">
-        <Text className="text-center text-muted-foreground">Liên kết ví để gửi tài sản.</Text>
-      </Card>
+      <CryptoTabShell>
+        <EmptyState icon="send" title="Chưa có ví" description="Tạo hoặc liên kết ví để gửi tài sản." />
+      </CryptoTabShell>
     );
   }
 
@@ -39,6 +45,8 @@ export function SendTab() {
 
   const addressValid = ethers.isAddress(to.trim());
   const amountValid = Number(amount) > 0 && Number(amount) <= Number(available);
+
+  const setMax = () => setAmount(available);
 
   const previewGas = async () => {
     if (!addressValid || !amountValid) return;
@@ -115,38 +123,69 @@ export function SendTab() {
   };
 
   return (
-    <ScrollView className="flex-1 px-4 py-4">
+    <CryptoTabShell>
       <Card className="gap-4">
-        <Text className="text-lg font-extrabold text-white">Gửi crypto</Text>
+        <CardHeader
+          title="Gửi crypto"
+          description="Ký offline · broadcast qua backend"
+          icon={<MaterialCommunityIcons name="arrow-up-bold" size={20} color={theme.primary} />}
+        />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row gap-2">
-          {tokenRows.map((t) => (
-            <Button
-              key={t.symbol + (t.contractAddress ?? "n")}
-              title={t.symbol}
-              variant={selected?.symbol === t.symbol ? "primary" : "ghost"}
-              onPress={() => setToken(t)}
-            />
-          ))}
-        </ScrollView>
+        <View className="gap-2">
+          <Text className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Token</Text>
+          <TokenChipRow
+            items={tokenRows.map((t) => ({ id: t.symbol + (t.contractAddress ?? "n"), label: t.symbol }))}
+            selectedId={selected ? selected.symbol + (selected.contractAddress ?? "n") : undefined}
+            onSelect={(id) => {
+              const t = tokenRows.find((x) => x.symbol + (x.contractAddress ?? "n") === id);
+              if (t) setToken(t);
+            }}
+          />
+        </View>
 
-        <Input label="Địa chỉ nhận (0x…)" value={to} onChangeText={setTo} />
+        <Input label="Địa chỉ nhận (0x…)" value={to} onChangeText={setTo} placeholder="0x…" />
         <Input
-          label={`Số lượng (khả dụng ${fmtNumber(available)})`}
+          label={`Số lượng · khả dụng ${fmtNumber(available)} ${symbol}`}
           value={amount}
           onChangeText={setAmount}
           keyboardType="decimal-pad"
+          suffix={
+            <Pressable onPress={setMax} className="rounded-full px-2 py-1" style={{ backgroundColor: theme.primarySoft }}>
+              <Text className="text-xs font-bold" style={{ color: theme.primary }}>
+                MAX
+              </Text>
+            </Pressable>
+          }
         />
 
         {gas ? (
-          <Text className="text-sm text-muted-foreground">
-            Phí ước tính: {fmtNumber(gas.totalFeeEth, 8)} {gas.nativeSymbol}
-          </Text>
+          <View className="rounded-2xl border border-border bg-white/5 p-3">
+            <Text className="text-xs text-muted-foreground">Phí ước tính</Text>
+            <Text className="font-bold text-white">
+              {fmtNumber(gas.totalFeeEth, 8)} {gas.nativeSymbol}
+            </Text>
+          </View>
         ) : null}
 
-        <Button title="Ước tính gas" variant="ghost" onPress={() => void previewGas()} loading={gasLoading} />
-        <Button title="Gửi" onPress={() => void handleSend()} loading={sending} />
+        <View className="flex-row gap-2">
+          <Button
+            title="Ước tính gas"
+            variant="outline"
+            onPress={() => void previewGas()}
+            loading={gasLoading}
+            fullWidth={false}
+            style={{ flex: 1 }}
+          />
+          <Button
+            title="Gửi"
+            onPress={() => void handleSend()}
+            loading={sending}
+            disabled={!addressValid || !amountValid}
+            fullWidth={false}
+            style={{ flex: 1 }}
+          />
+        </View>
       </Card>
-    </ScrollView>
+    </CryptoTabShell>
   );
 }

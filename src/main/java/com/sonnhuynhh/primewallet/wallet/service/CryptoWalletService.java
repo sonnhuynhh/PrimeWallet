@@ -172,6 +172,15 @@ public class CryptoWalletService {
     }
 
     /**
+     * Lịch sử chuyển nhượng ERC-721 từ explorer — client dựng danh sách NFT đang giữ.
+     */
+    public NftTransfersResponse getWalletNftTransfers(UUID userId, UUID walletId) {
+        CryptoWallet wallet = findByOwner(userId, walletId);
+        BlockchainNetwork network = BlockchainNetwork.fromIdWithLegacy(wallet.getBlockchainNetwork());
+        return etherscanService.getNftTokenTransfers(wallet.getWalletAddress(), network);
+    }
+
+    /**
      * Lịch sử giao dịch user thực hiện trong app (PENDING/SUCCESS/FAILED).
      */
     @Transactional(readOnly = true)

@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { ethers } from "ethers";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { Button } from "../../ui/Button";
-import { Card } from "../../ui/Card";
+import { Card, CardHeader } from "../../ui/Card";
 import { Input } from "../../ui/Input";
 import { Badge } from "../../ui/Badge";
+import { EmptyState } from "../../ui/EmptyState";
+import { CryptoTabShell } from "../CryptoTabShell";
+import { TokenChipRow } from "../TokenChipRow";
 import { toastErr, toastOk } from "../../feedback/toast";
 import { clampDecimals, fmtNumber, fmtVnd } from "../../../lib/utils";
 import { rpcOf } from "../../../lib/chains";
@@ -19,6 +23,7 @@ import {
   type BridgeRates,
 } from "../../../services/bridge";
 import type { TokenInfo } from "../../../services/crypto";
+import { shellTheme } from "../../../theme/tokens";
 
 async function waitForReceipt(rpcUrl: string, hash: string) {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -31,6 +36,7 @@ async function waitForReceipt(rpcUrl: string, hash: string) {
 }
 
 export function BridgeTab() {
+  const theme = shellTheme.crypto;
   const { reloadSession } = useAuth();
   const { activeWallet, balance, tokens, signAndSend, reload } = useCrypto();
   const [amount, setAmount] = useState("");
@@ -59,9 +65,9 @@ export function BridgeTab() {
 
   if (!activeWallet) {
     return (
-      <Card className="mx-4 my-4">
-        <Text className="text-center text-muted-foreground">Liên kết ví để đổi sang VND.</Text>
-      </Card>
+      <CryptoTabShell>
+        <EmptyState icon="bank-transfer" title="Chưa có ví" description="Liên kết ví để đổi crypto sang VND." />
+      </CryptoTabShell>
     );
   }
 
@@ -119,36 +125,51 @@ export function BridgeTab() {
   const liveRate = rates?.rates?.[symbol];
 
   return (
-    <View className="gap-4 px-4 py-4">
-      <Card className="gap-3">
-        <View className="flex-row items-center justify-between">
-          <Text className="text-lg font-extrabold text-white">Đổi Crypto → VND</Text>
-          <Badge variant="primary">{rates?.source === "coingecko" ? "Realtime" : "Tỷ giá"}</Badge>
-        </View>
+    <CryptoTabShell>
+      <Card className="gap-4">
+        <CardHeader
+          title="Đổi Crypto → VND"
+          description="Gửi on-chain · nhận VND vào ví Fiat"
+          icon={<MaterialCommunityIcons name="bank-transfer" size={20} color={theme.primary} />}
+          action={<Badge variant="primary">{rates?.source === "coingecko" ? "Realtime" : "Tỷ giá"}</Badge>}
+        />
+
         {liveRate ? (
-          <Text className="text-sm text-muted-foreground">
-            1 {symbol} ≈ {fmtVnd(liveRate)}
-          </Text>
+          <View className="rounded-2xl border border-border bg-white/5 p-3">
+            <Text className="text-xs text-muted-foreground">Tỷ giá hiện tại</Text>
+            <Text className="font-extrabold text-white">
+              1 {symbol} ≈ {fmtVnd(liveRate)}
+            </Text>
+          </View>
         ) : null}
 
-        <Input label="Token" value={symbol} onChangeText={setSymbol} placeholder={selectable.join(", ")} />
+        <View className="gap-2">
+          <Text className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Token</Text>
+          <TokenChipRow
+            items={selectable.map((s) => ({ id: s, label: s }))}
+            selectedId={symbol}
+            onSelect={setSymbol}
+          />
+        </View>
+
         <Input
-          label={`Số lượng (khả dụng: ${fmtNumber(available)})`}
+          label={`Số lượng · khả dụng ${fmtNumber(available)} ${symbol}`}
           value={amount}
           onChangeText={setAmount}
           keyboardType="decimal-pad"
         />
 
-        <Button title="Báo giá" onPress={() => void handleQuote()} loading={quoting} />
+        <Button title="Lấy báo giá" onPress={() => void handleQuote()} loading={quoting} />
 
         {quote ? (
-          <View className="gap-2 rounded-2xl border border-border bg-white/5 p-3">
-            <Text className="font-bold text-white">Nhận: {fmtVnd(quote.vndAmount)}</Text>
-            <Text className="text-xs text-muted-foreground">Treasury: {quote.treasuryAddress}</Text>
+          <View className="gap-3 rounded-2xl border p-4" style={{ borderColor: `${theme.primary}44`, backgroundColor: theme.primarySoft }}>
+            <Text className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Bạn nhận</Text>
+            <Text className="text-3xl font-extrabold text-white">{fmtVnd(quote.vndAmount)}</Text>
+            <Text className="font-mono text-xs text-muted-foreground">Treasury: {quote.treasuryAddress}</Text>
             <Button title="Gửi & xác nhận" onPress={() => void handleBridge()} loading={submitting} />
           </View>
         ) : null}
       </Card>
-    </View>
+    </CryptoTabShell>
   );
 }

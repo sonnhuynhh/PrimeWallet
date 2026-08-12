@@ -1,0 +1,38 @@
+@startuml Hinh_2_3_Sequence_Truy_van_So_Du
+title Hình 2.3 – Sequence: Truy vấn số dư đa ví (Fiat & Crypto)
+skinparam sequenceMessageAlign center
+
+actor "Người dùng" as User
+participant "Web/Mobile" as UI
+participant "JwtFilter" as JWT
+participant "AccountController\nCryptoWalletController" as Ctrl
+participant "AccountService\nCryptoWalletService" as Svc
+participant "Web3jProvider\nERC20Service" as Chain
+participant "EtherscanService" as Explorer
+database "PostgreSQL" as DB
+
+== Fiat – Số dư VND ==
+User -> UI : Mở Ví Fiat
+UI -> JWT : GET /api/v1/accounts\nAuthorization: Bearer
+JWT -> Ctrl : Xác thực JWT
+Ctrl -> Svc : getAccountsByUser(userId)
+Svc -> DB : findByUserId(accounts)
+Svc --> Ctrl : List<Account> (balance, accountNumber)
+Ctrl --> UI : Số dư VND
+UI --> User : Hiển thị số dư Fiat
+
+== Crypto – Số dư on-chain ==
+User -> UI : Mở Ví Crypto / chọn mạng
+UI -> JWT : GET /api/v1/crypto/wallets/{id}/balance
+JWT -> Ctrl : Xác thực JWT
+Ctrl -> Svc : getWalletBalance(userId, walletId)
+Svc -> Chain : eth_getBalance (native coin)
+Svc -> Chain : balanceOf (ERC-20 tokens)
+alt RPC lỗi
+  Svc -> Explorer : getWalletBalance (fallback V2)
+end
+Svc --> Ctrl : WalletBalanceResponse\n(balanceEth, tokens[])
+Ctrl --> UI : JSON số dư
+UI --> User : Hiển thị ETH + token (USDC, ...)
+
+@enduml

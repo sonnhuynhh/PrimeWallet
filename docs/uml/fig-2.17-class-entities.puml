@@ -1,0 +1,128 @@
+@startuml Hinh_2_17_Class_Diagram_Entities
+title Hình 2.17 – Class Diagram: Các lớp thực thể chính (Domain Model)
+skinparam classAttributeIconSize 0
+
+package "auth" {
+  class User {
+    - id: UUID
+    - email: String
+    - phone: String
+    - passwordHash: String
+    - fullName: String
+    - kycStatus: KycStatus
+    - role: Role
+    - status: String
+    + isKycVerified(): boolean
+  }
+
+  enum KycStatus {
+    PENDING
+    VERIFIED
+    REJECTED
+  }
+
+  enum Role {
+    USER
+    ADMIN
+  }
+
+  class RefreshToken {
+    - id: UUID
+    - token: String
+    - expiresAt: LocalDateTime
+  }
+
+  User "1" --> "*" RefreshToken
+  User --> KycStatus
+  User --> Role
+}
+
+package "wallet" {
+  class Account {
+    - id: UUID
+    - accountNumber: String
+    - currency: String
+    - balance: BigDecimal
+    - status: AccountStatus
+  }
+
+  class Transaction {
+    - id: UUID
+    - idempotencyKey: UUID
+    - referenceNumber: String
+    - transactionType: TransactionType
+    - amount: BigDecimal
+    - fee: BigDecimal
+    - status: TransactionStatus
+    - description: String
+  }
+
+  class LedgerEntry {
+    - id: UUID
+    - entryType: EntryType
+    - amount: BigDecimal
+    - balanceAfter: BigDecimal
+  }
+
+  enum TransactionType {
+    TOPUP
+    WITHDRAW
+    TRANSFER
+    PAYMENT
+  }
+
+  enum EntryType {
+    DEBIT
+    CREDIT
+  }
+
+  class CryptoWallet {
+    - id: UUID
+    - address: String
+    - network: String
+    - label: String
+    - isPrimary: boolean
+  }
+
+  class CryptoTransaction {
+    - id: UUID
+    - txHash: String
+    - txType: CryptoTxType
+    - amount: String
+    - tokenSymbol: String
+    - status: TransactionStatus
+  }
+
+  User "1" --> "*" Account
+  Account "1" --> "*" LedgerEntry
+  Transaction "1" --> "*" LedgerEntry
+  Transaction --> Account : sourceAccount
+  Transaction --> Account : destinationAccount
+  User "1" --> "*" CryptoWallet
+  CryptoWallet "1" --> "*" CryptoTransaction
+  Transaction --> TransactionType
+  LedgerEntry --> EntryType
+}
+
+package "payment" {
+  class PaymentOrder {
+    - id: UUID
+    - amount: BigDecimal
+    - vnpTxnRef: String
+    - status: PaymentStatus
+  }
+  User "1" --> "*" PaymentOrder
+}
+
+package "common" {
+  class AuditLog {
+    - id: UUID
+    - action: String
+    - targetType: String
+    - targetId: UUID
+    - details: String
+  }
+  User "1" --> "*" AuditLog : admin
+}
+
+@enduml

@@ -1,4 +1,4 @@
-import { chainIdOf, explorerV2ApiOf, normalizeNetworkId } from '@/lib/wagmi/chains';
+import { chainIdOf, ETHERSCAN_V2_API, normalizeNetworkId } from '@/lib/wagmi/chains';
 
 export interface EtherscanV2Response<T = unknown> {
   status: string;
@@ -6,9 +6,19 @@ export interface EtherscanV2Response<T = unknown> {
   result: T;
 }
 
+async function safeJson<T>(response: Response): Promise<T | null> {
+  try {
+    const text = await response.text();
+    if (!text.trim() || text.trim().startsWith('<')) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Gọi explorer API V2 đúng domain theo mạng (BscScan, PolygonScan…).
- * Một API key Etherscan dùng chung; BSC/Polygon/Base không gọi qua api.etherscan.io trên gói free.
+ * Gọi Etherscan API V2 thống nhất (chainid chọn mạng).
+ * @see https://docs.etherscan.io/v2-migration
  */
 export async function fetchEtherscanV2<T = unknown>(
   networkId: string,
@@ -22,7 +32,11 @@ export async function fetchEtherscanV2<T = unknown>(
   });
   if (apiKey) search.set('apikey', apiKey);
 
-  const response = await fetch(`${explorerV2ApiOf(networkId)}?${search.toString()}`);
-  if (!response.ok) return null;
-  return (await response.json()) as EtherscanV2Response<T>;
+  try {
+    const response = await fetch(`${ETHERSCAN_V2_API}?${search.toString()}`);
+    if (!response.ok) return null;
+    return await safeJson<EtherscanV2Response<T>>(response);
+  } catch {
+    return null;
+  }
 }

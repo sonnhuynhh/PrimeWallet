@@ -6,6 +6,16 @@ export interface EtherscanV2Response<T = unknown> {
   result: T;
 }
 
+async function safeJson<T>(response: Response): Promise<T | null> {
+  try {
+    const text = await response.text();
+    if (!text.trim() || text.trim().startsWith("<")) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchEtherscanV2<T = unknown>(
   networkId: string,
   params: Record<string, string>,
@@ -18,7 +28,11 @@ export async function fetchEtherscanV2<T = unknown>(
   });
   if (apiKey) search.set("apikey", apiKey);
 
-  const response = await fetch(`${explorerV2ApiOf(networkId)}?${search.toString()}`);
-  if (!response.ok) return null;
-  return (await response.json()) as EtherscanV2Response<T>;
+  try {
+    const response = await fetch(`${explorerV2ApiOf(networkId)}?${search.toString()}`);
+    if (!response.ok) return null;
+    return await safeJson<EtherscanV2Response<T>>(response);
+  } catch {
+    return null;
+  }
 }

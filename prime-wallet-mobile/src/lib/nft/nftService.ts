@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 
 import { fetchEtherscanV2 } from "../etherscan/v2";
 import { normalizeNetworkId, type NetworkId } from "../chains";
+import { getWalletNftTransfers } from "../../services/crypto";
 
 export interface NftItem {
   contract: string;
@@ -20,6 +21,7 @@ export type NftResult =
 const ALCHEMY_NETWORK: Partial<Record<NetworkId, string>> = {
   eth_mainnet: "eth-mainnet",
   eth_sepolia: "eth-sepolia",
+  bsc_mainnet: "bnb-mainnet",
   polygon_mainnet: "polygon-mainnet",
   base_mainnet: "base-mainnet",
 };
@@ -48,7 +50,12 @@ async function fetchFromAlchemy(networkId: string, owner: string, apiKey: string
     return { kind: "unavailable", reason: `Alchemy lỗi ${response.status}` };
   }
 
-  const body = (await response.json()) as {
+  const text = await response.text();
+  if (!text.trim() || text.trim().startsWith("<")) {
+    return { kind: "unavailable", reason: "Alchemy trả về dữ liệu không hợp lệ." };
+  }
+
+  let body: {
     ownedNfts?: Array<{
       contract?: { address?: string; name?: string; openSeaMetadata?: { collectionName?: string } };
       tokenId?: string;
@@ -59,6 +66,12 @@ async function fetchFromAlchemy(networkId: string, owner: string, apiKey: string
     }>;
     pageKey?: string;
   };
+
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { kind: "unavailable", reason: "Không đọc được phản hồi Alchemy." };
+  }
 
   const items = (body.ownedNfts ?? []).flatMap((nft): NftItem[] => {
     const contract = nft.contract?.address;
@@ -90,6 +103,45 @@ interface EtherscanNftTx {
   to: string;
 }
 
+async function fetchFromBackend(walletId: string, owner: string): Promise<NftResult | null> {
+  try {
+    const body = await getWalletNftTransfers(walletId);
+    if (body.status !== "1" || !Array.isArray(body.result)) {
+      return {
+        kind: "unavailable",
+        reason: body.message || "Explorer từ chối yêu cầu — kiểm tra etherscan.api-key trên backend.",
+      };
+    }
+    return buildFromTransfers(body.result, owner);
+  } catch {
+    return null;
+  }
+}
+
+function buildFromTransfers(transfers: EtherscanNftTx[], owner: string): NftResult {
+  const held = new Map<string, NftItem>();
+  const target = ethers.getAddress(owner);
+
+  for (const tx of transfers) {
+    const key = `${tx.contractAddress.toLowerCase()}:${tx.tokenID}`;
+    if (ethers.getAddress(tx.to) === target) {
+      held.set(key, {
+        contract: ethers.getAddress(tx.contractAddress),
+        tokenId: tx.tokenID,
+        name: tx.tokenName ? `${tx.tokenName} #${tx.tokenID}` : null,
+        collection: tx.tokenName ?? tx.tokenSymbol ?? null,
+        imageUrl: null,
+        tokenType: "ERC721",
+        balance: "1",
+      });
+    } else if (ethers.getAddress(tx.from) === target) {
+      held.delete(key);
+    }
+  }
+
+  return { kind: "ok", items: [...held.values()], source: "etherscan", truncated: transfers.length >= 1000 };
+}
+
 async function fetchFromEtherscan(networkId: string, owner: string, apiKey?: string): Promise<NftResult> {
   const body = await fetchEtherscanV2<EtherscanNftTx[] | string>(
     networkId,
@@ -107,46 +159,40 @@ async function fetchFromEtherscan(networkId: string, owner: string, apiKey?: str
   );
 
   if (!body) {
-    return { kind: "unavailable", reason: "Không gọi được Etherscan NFT API." };
+    return {
+      kind: "unavailable",
+      reason: "Không kết nối được explorer — cấu hình etherscan.api-key trên backend hoặc EXPO_PUBLIC_ETHERSCAN_API_KEY.",
+    };
   }
   if (body.status !== "1" || !Array.isArray(body.result)) {
-    return { kind: "ok", items: [], source: "etherscan", truncated: false };
-  }
-
-  const held = new Map<string, NftItem>();
-  const target = ethers.getAddress(owner);
-
-  for (const tx of body.result) {
-    const key = `${tx.contractAddress.toLowerCase()}:${tx.tokenID}`;
-    if (ethers.getAddress(tx.to) === target) {
-      held.set(key, {
-        contract: ethers.getAddress(tx.contractAddress),
-        tokenId: tx.tokenID,
-        name: tx.tokenName ? `${tx.tokenName} #${tx.tokenID}` : null,
-        collection: tx.tokenName ?? tx.tokenSymbol ?? null,
-        imageUrl: null,
-        tokenType: "ERC721",
-        balance: "1",
-      });
-    } else if (ethers.getAddress(tx.from) === target) {
-      held.delete(key);
+    const detail = typeof body.result === "string" ? body.result : body.message;
+    if (detail?.toLowerCase().includes("no transactions") || detail?.toLowerCase().includes("no record found")) {
+      return { kind: "ok", items: [], source: "etherscan", truncated: false };
     }
+    return { kind: "unavailable", reason: detail || body.message || "Explorer từ chối yêu cầu." };
   }
 
-  return { kind: "ok", items: [...held.values()], source: "etherscan", truncated: body.result.length >= 1000 };
+  return buildFromTransfers(body.result, owner);
 }
 
 export async function fetchNfts(params: {
   networkId: string;
   owner: string;
+  walletId?: string;
   alchemyApiKey?: string;
   etherscanApiKey?: string;
 }): Promise<NftResult> {
   try {
     if (params.alchemyApiKey) {
-      const result = await fetchFromAlchemy(params.networkId, params.owner, params.alchemyApiKey);
-      if (result.kind === "ok") return result;
+      const alchemy = await fetchFromAlchemy(params.networkId, params.owner, params.alchemyApiKey);
+      if (alchemy.kind === "ok") return alchemy;
     }
+
+    if (params.walletId) {
+      const backend = await fetchFromBackend(params.walletId, params.owner);
+      if (backend) return backend;
+    }
+
     return await fetchFromEtherscan(params.networkId, params.owner, params.etherscanApiKey);
   } catch (error) {
     return {

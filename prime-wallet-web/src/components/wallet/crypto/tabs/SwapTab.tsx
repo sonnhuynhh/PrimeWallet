@@ -1,13 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { formatUnits, parseUnits, type Address } from 'viem';
+import { formatUnits, parseUnits } from 'viem';
 import { ArrowDownUp, Loader2, Route, TriangleAlert, Zap } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { TokenPicker } from '@/components/ui/TokenPicker';
 import { toastErr, toastOk } from '@/components/feedback/toast';
-import { clampDecimals, cn, fmtNumber } from '@/lib/utils';
+import { clampDecimals, cn, decimalAmountString, fmtNumber } from '@/lib/utils';
 import { useSwapQuote } from '@/lib/hooks/useSwapQuote';
 import {
   DEFAULT_SLIPPAGE_BPS,
@@ -29,7 +30,7 @@ import { useCrypto } from '../CryptoContext';
  */
 export function SwapTab() {
   const { data, chainId, address, signAndSend } = useCrypto();
-  const { activeNetwork } = data;
+  const { activeNetwork, balance, tokenRows, loadBalance } = data;
 
   const tokens = useMemo<DexToken[]>(() => SEPOLIA_TOKENS, []);
   const [tokenIn, setTokenIn] = useState<DexToken>(tokens[0]);
@@ -37,6 +38,41 @@ export function SwapTab() {
   const [amountText, setAmountText] = useState('');
   const [slippageBps, setSlippageBps] = useState<number>(DEFAULT_SLIPPAGE_BPS);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    void loadBalance();
+  }, [loadBalance]);
+
+  const tokenRow = useMemo(() => {
+    if (isNativeAddress(tokenIn.address)) return null;
+    return (
+      tokenRows.find(
+        (t) => t.contractAddress?.toLowerCase() === tokenIn.address.toLowerCase(),
+      ) ?? null
+    );
+  }, [tokenIn.address, tokenRows]);
+
+  const available = useMemo(() => {
+    if (isNativeAddress(tokenIn.address)) {
+      return balance?.balanceEth ?? '0';
+    }
+    return tokenRow?.balance ?? '0';
+  }, [tokenIn.address, balance?.balanceEth, tokenRow]);
+
+  const maxAmountWei = useMemo(() => {
+    try {
+      if (isNativeAddress(tokenIn.address) && balance?.balanceWei) {
+        return BigInt(balance.balanceWei);
+      }
+      if (tokenRow?.rawBalance) {
+        return BigInt(tokenRow.rawBalance);
+      }
+      const human = decimalAmountString(available, tokenIn.decimals);
+      return parseUnits(clampDecimals(human, tokenIn.decimals), tokenIn.decimals);
+    } catch {
+      return 0n;
+    }
+  }, [available, tokenIn.address, tokenIn.decimals, balance?.balanceWei, tokenRow?.rawBalance]);
 
   const supported = isSwapSupported(chainId);
 
@@ -48,6 +84,36 @@ export function SwapTab() {
       return 0n;
     }
   }, [amountText, tokenIn.decimals]);
+
+  const exceedsBalance = amountIn > 0n && maxAmountWei > 0n && amountIn > maxAmountWei;
+
+  const handleAmountChange = (raw: string) => {
+    const cleaned = raw.replace(/,/g, '.');
+    if (cleaned === '' || cleaned === '.') {
+      setAmountText(cleaned);
+      return;
+    }
+    if (!/^\d*\.?\d*$/.test(cleaned)) return;
+
+    try {
+      const parsed = parseUnits(clampDecimals(cleaned, tokenIn.decimals), tokenIn.decimals);
+      if (maxAmountWei > 0n && parsed > maxAmountWei) {
+        setAmountText(clampDecimals(formatUnits(maxAmountWei, tokenIn.decimals), tokenIn.decimals));
+        return;
+      }
+    } catch {
+      // Cho phép nhập dở (vd. "0.")
+    }
+    setAmountText(cleaned);
+  };
+
+  const setMaxAmount = () => {
+    if (maxAmountWei === 0n) {
+      setAmountText('');
+      return;
+    }
+    setAmountText(clampDecimals(formatUnits(maxAmountWei, tokenIn.decimals), tokenIn.decimals));
+  };
 
   const quoteQuery = useSwapQuote({
     chainId,
@@ -103,6 +169,7 @@ export function SwapTab() {
       if (hash) {
         toastOk('Đã phát lệnh swap', `${tokenIn.symbol} → ${tokenOut.symbol}`);
         setAmountText('');
+        void loadBalance();
       }
     } catch (error) {
       toastErr(error, 'Swap thất bại');
@@ -147,14 +214,27 @@ export function SwapTab() {
         <div className="rounded-2xl border border-[--color-border] bg-black/20 p-4">
           <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
             <span>Bán</span>
+            <button
+              type="button"
+              onClick={setMaxAmount}
+              className="normal-case tracking-normal text-slate-400 transition-colors hover:text-[--color-primary]"
+            >
+              Khả dụng:{' '}
+              <span className="font-bold text-slate-300">
+                {fmtNumber(available, 6)} {tokenIn.symbol}
+              </span>
+            </button>
           </div>
           <div className="flex items-center gap-3">
             <input
               value={amountText}
-              onChange={(event) => setAmountText(event.target.value)}
+              onChange={(event) => handleAmountChange(event.target.value)}
               placeholder="0.0"
               inputMode="decimal"
-              className="min-w-0 flex-1 bg-transparent text-3xl font-bold text-white outline-none placeholder:text-slate-700"
+              className={cn(
+                'min-w-0 flex-1 bg-transparent text-3xl font-bold text-white outline-none placeholder:text-slate-700',
+                exceedsBalance && 'text-rose-400',
+              )}
             />
             <TokenPicker
               tokens={tokens}
@@ -162,9 +242,13 @@ export function SwapTab() {
               onChange={(token) => {
                 if (token.address === tokenOut.address) setTokenOut(tokenIn);
                 setTokenIn(token);
+                setAmountText('');
               }}
             />
           </div>
+          {exceedsBalance ? (
+            <p className="mt-2 text-xs font-semibold text-rose-400">Số dư không đủ</p>
+          ) : null}
         </div>
 
         <div className="relative z-10 -my-3 flex justify-center">
@@ -235,7 +319,7 @@ export function SwapTab() {
         <Button
           className="mt-5"
           loading={submitting}
-          disabled={!quote || amountIn === 0n || submitting}
+          disabled={!quote || amountIn === 0n || submitting || exceedsBalance}
           onClick={() => void handleSwap()}
         >
           {quoteQuery.isFetching && !quote ? (
@@ -309,32 +393,5 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dt className="shrink-0 text-slate-500">{label}</dt>
       <dd className="min-w-0 font-medium text-slate-200">{children}</dd>
     </div>
-  );
-}
-
-function TokenPicker({
-  tokens,
-  value,
-  onChange,
-}: {
-  tokens: DexToken[];
-  value: DexToken;
-  onChange: (token: DexToken) => void;
-}) {
-  return (
-    <select
-      value={value.address}
-      onChange={(event) => {
-        const found = tokens.find((token) => token.address === (event.target.value as Address));
-        if (found) onChange(found);
-      }}
-      className="shrink-0 rounded-xl border border-[--color-border] bg-slate-900 px-3 py-2 font-bold text-white outline-none focus:border-[--color-primary]"
-    >
-      {tokens.map((token) => (
-        <option key={token.address} value={token.address}>
-          {token.symbol}
-        </option>
-      ))}
-    </select>
   );
 }

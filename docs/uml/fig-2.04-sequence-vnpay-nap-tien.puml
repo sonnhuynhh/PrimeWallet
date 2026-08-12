@@ -1,0 +1,51 @@
+@startuml Hinh_2_4_Sequence_VNPay_Nap_Tien
+title Hình 2.4 – Sequence: Tích hợp và xử lý nạp tiền VNPay
+skinparam sequenceMessageAlign center
+
+actor "Người dùng" as User
+participant "Web Frontend" as UI
+participant "PaymentController" as PayCtrl
+participant "PaymentService" as PaySvc
+participant "VNPay Gateway" as VNPay
+participant "TransactionService" as TxSvc
+participant "LedgerService" as Ledger
+database "PostgreSQL" as DB
+queue "Kafka\nwallet.transactions" as Kafka
+
+== Tạo URL thanh toán ==
+User -> UI : Nhập số tiền nạp
+UI -> PayCtrl : POST /api/payment/vnpay/create\n(amount, JWT)
+PayCtrl -> PaySvc : createPaymentUrl(userId, amount)
+PaySvc -> DB : Tạo PaymentOrder (PENDING)
+PaySvc -> PaySvc : Ký HMAC-SHA512 (VnpayUtil)
+PaySvc --> PayCtrl : paymentUrl
+PayCtrl --> UI : Redirect URL
+UI -> VNPay : Chuyển hướng người dùng
+
+== Xác nhận thanh toán ==
+VNPay --> UI : Redirect /vnpay-return?params
+UI -> PayCtrl : POST /api/payment/vnpay/confirm
+PayCtrl -> PaySvc : confirmPayment(params)
+PaySvc -> PaySvc : Xác minh chữ ký + số tiền
+
+alt Thanh toán thành công
+  PaySvc -> TxSvc : topUp(userId, amount)
+  TxSvc -> DB : BEGIN TRANSACTION
+  TxSvc -> Ledger : CREDIT Account (double-entry)
+  TxSvc -> DB : Lưu Transaction (TOPUP, SUCCESS)
+  TxSvc -> DB : COMMIT
+  TxSvc -> Kafka : publish(TransactionEvent)
+  PaySvc -> DB : PaymentOrder = SUCCESS
+else Thanh toán thất bại / chữ ký sai
+  PaySvc -> DB : PaymentOrder = FAILED
+end
+
+PayCtrl --> UI : Kết quả nạp tiền
+UI --> User : Cập nhật số dư
+
+note over VNPay, PaySvc
+  IPN: POST /api/payment/vnpay/ipn (permitAll)
+  Dùng khi production có callback server-to-server
+end note
+
+@enduml

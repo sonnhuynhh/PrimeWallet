@@ -1,0 +1,60 @@
+@startuml Hinh_2_7_Kien_truc_Event_Driven_Kafka
+title Hình 2.7 – Kiến trúc Event-Driven với Apache Kafka
+skinparam componentStyle rectangle
+
+package "Client Layer" {
+  [Web App\nReact + Vite] as Web
+  [Mobile App\nExpo React Native] as Mobile
+}
+
+package "Backend API (Spring Boot :8080)" {
+  [TransactionService] as TxSvc
+  [CryptoTransactionController] as CryptoCtrl
+  [TransactionEventPublisher] as Publisher
+  [NotificationConsumer] as NotifConsumer
+  [AiInsightService] as AiSync
+}
+
+queue "Apache Kafka" as Kafka {
+  frame "Topic: wallet.transactions" as Topic
+}
+
+package "AI Microservice (FastAPI :8000)" {
+  [Kafka Consumer\nkafka_consumer.py] as AiConsumer
+  [FraudDetector] as Fraud
+  [SpendingAnalyzer] as Spend
+  database "SQLite\nai.db" as AiDB
+}
+
+package "External" {
+  [PostgreSQL] as PG
+  [Web Push / UI] as Notify
+}
+
+Web --> TxSvc : REST API
+Mobile --> TxSvc : REST API
+Web --> CryptoCtrl : REST API
+
+TxSvc --> PG : Ghi Transaction + Ledger
+CryptoCtrl --> PG : Ghi CryptoTransaction
+
+TxSvc --> Publisher : publish(TransactionEvent)
+CryptoCtrl --> Publisher : publish(TransactionEvent)
+Publisher --> Topic : JSON event\n(userId, type, amount, ...)
+
+Topic --> AiConsumer : consume
+AiConsumer --> AiDB : ingest transaction
+AiConsumer --> Fraud : risk_score()
+AiConsumer --> Spend : analyze()
+
+Topic --> NotifConsumer : consume
+NotifConsumer --> Notify : Cảnh báo / thông báo
+
+AiSync ..> AiConsumer : HTTP fallback sync\n(/ingest)
+
+note bottom of Topic
+  Event-driven: tách ghi sổ (sync) và phân tích AI (async)
+  Giảm độ trễ API, scale consumer độc lập
+end note
+
+@enduml

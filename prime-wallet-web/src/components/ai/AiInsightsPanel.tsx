@@ -26,7 +26,15 @@ export function AiInsightsPanel() {
     load();
   }, []);
 
-  const aiDown = insights === null && risk === null;
+  const aiDown =
+    (insights === null && risk === null) ||
+    insights?.available === false ||
+    risk?.available === false;
+
+  const offlineMessage =
+    insights?.error ||
+    risk?.error ||
+    'Khởi động AI microservice (port 8000) để xem phân tích chi tiêu & rủi ro.';
 
   // ===== Risk score display =====
   const riskScore = risk?.score ?? null;
@@ -59,7 +67,7 @@ export function AiInsightsPanel() {
             <WifiOff className="w-8 h-8 text-slate-500 shrink-0" />
             <div>
               <p className="font-bold text-slate-300 text-sm">AI service chưa hoạt động</p>
-              <p className="text-xs text-slate-500">Khởi động AI microservice (port 8000) để xem phân tích chi tiêu & rủi ro.</p>
+              <p className="text-xs text-slate-500">{offlineMessage}</p>
             </div>
           </div>
         ) : (
