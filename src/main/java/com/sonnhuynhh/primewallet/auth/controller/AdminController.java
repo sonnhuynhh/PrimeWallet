@@ -1,8 +1,10 @@
 package com.sonnhuynhh.primewallet.auth.controller;
 
 import com.sonnhuynhh.primewallet.auth.dto.AdminStatsResponse;
+import com.sonnhuynhh.primewallet.auth.dto.AdminUserDetailResponse;
 import com.sonnhuynhh.primewallet.auth.dto.AdminUserResponse;
 import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
+import com.sonnhuynhh.primewallet.wallet.dto.AccountResponse;
 import com.sonnhuynhh.primewallet.wallet.dto.TransactionResponse;
 import com.sonnhuynhh.primewallet.auth.service.AdminService;
 import com.sonnhuynhh.primewallet.common.dto.ApiResponse;
@@ -24,6 +26,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -130,6 +133,26 @@ public class AdminController {
     public ResponseEntity<ApiResponse<AdminUserResponse>> getUserById(@PathVariable UUID id) {
         AdminUserResponse user = adminService.getUserById(id);
         return ResponseEntity.ok(ApiResponse.success("Thông tin người dùng", user));
+    }
+
+    /**
+     * Chi tiết user: hồ sơ + ví + giao dịch gần đây + risk AI.
+     *
+     * GET /api/v1/admin/users/{id}/detail
+     */
+    @GetMapping("/users/{id}/detail")
+    public ResponseEntity<ApiResponse<AdminUserDetailResponse>> getUserDetail(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success("Chi tiết người dùng", adminService.getUserDetail(id)));
+    }
+
+    /**
+     * Danh sách ví Fiat của user.
+     *
+     * GET /api/v1/admin/users/{id}/accounts
+     */
+    @GetMapping("/users/{id}/accounts")
+    public ResponseEntity<ApiResponse<List<AccountResponse>>> getUserAccounts(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success("Danh sách ví", adminService.getUserAccounts(id)));
     }
 
     /**

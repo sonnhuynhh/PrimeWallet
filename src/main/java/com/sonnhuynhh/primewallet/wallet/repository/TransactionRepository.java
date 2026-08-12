@@ -34,6 +34,19 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     Page<Transaction> findByAccountId(UUID accountId, Pageable pageable);
 
     /**
+     * Giao dịch liên quan tới bất kỳ ví nào của user (nguồn hoặc đích).
+     */
+    @Query("""
+            SELECT t FROM Transaction t
+            WHERE (t.sourceAccount IS NOT NULL AND t.sourceAccount.user.id = :userId)
+               OR (t.destinationAccount IS NOT NULL AND t.destinationAccount.user.id = :userId)
+            ORDER BY t.createdAt DESC
+            """)
+    Page<Transaction> findByUserId(
+            @org.springframework.data.repository.query.Param("userId") UUID userId,
+            Pageable pageable);
+
+    /**
      * Tìm giao dịch theo mã tham chiếu.
      * Dùng khi user tìm kiếm giao dịch bằng mã hiển thị trên giao diện.
      */

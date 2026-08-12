@@ -54,8 +54,9 @@ import {
   getAdminTransactions,
   getAdminStats,
   getAdminFraudReport,
+  getAdminUserDetail,
 } from '../services/admin';
-import type { AdminUserResponse, Page, AdminStats, FraudReport, FraudRiskLevel } from '../services/admin';
+import type { AdminUserResponse, Page, AdminStats, FraudReport, FraudRiskLevel, AdminUserDetail } from '../services/admin';
 import type { EtherscanTransaction } from '../services/crypto';
 import type { AuditLogResponse, TransactionResponse } from '../types/api';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -316,6 +317,11 @@ export function AdminDashboard() {
   const [rejectTarget, setRejectTarget] = useState<AdminUserResponse | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
+  /** Modal chi tiết user. */
+  const [detailUserId, setDetailUserId] = useState<string | null>(null);
+  const [userDetail, setUserDetail] = useState<AdminUserDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
   const fetchData = async (page: number) => {
     try {
       setLoading(true);
@@ -455,6 +461,25 @@ export function AdminDashboard() {
     } catch (e) {
       toastErr(e, locking ? 'Không khoá được tài khoản' : 'Không mở khoá được tài khoản');
     }
+  };
+
+  const openUserDetail = async (userId: string) => {
+    setDetailUserId(userId);
+    setUserDetail(null);
+    try {
+      setDetailLoading(true);
+      setUserDetail(await getAdminUserDetail(userId));
+    } catch (e) {
+      toastErr(e, 'Không tải được chi tiết người dùng');
+      setDetailUserId(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closeUserDetail = () => {
+    setDetailUserId(null);
+    setUserDetail(null);
   };
 
   const handleToggleLock = async (user: AdminUserResponse) => {
@@ -680,8 +705,12 @@ export function AdminDashboard() {
                               : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
                         return (
                           <tr key={row.user_id} className="transition-colors hover:bg-white/3">
-                            <td className="p-4">
-                              <p className="font-semibold text-white">{row.fullName || '—'}</p>
+                            <td
+                              className="cursor-pointer p-4"
+                              onClick={() => openUserDetail(row.user_id)}
+                              title="Xem chi tiết"
+                            >
+                              <p className="font-semibold text-white hover:text-sky-300">{row.fullName || '—'}</p>
                               <p className="text-xs text-slate-400">{row.email || row.user_id.slice(0, 8) + '…'}</p>
                             </td>
                             <td className="p-4">
@@ -1088,7 +1117,11 @@ export function AdminDashboard() {
                   {!loading &&
                     activeTab === 'users' &&
                     usersPage?.content.map((user) => (
-                      <tr key={user.id} className="transition-colors hover:bg-white/3">
+                      <tr
+                        key={user.id}
+                        className="cursor-pointer transition-colors hover:bg-white/3"
+                        onClick={() => openUserDetail(user.id)}
+                      >
                         <td className="p-4">
                           <div className="flex items-center gap-3">
                             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-500/15 text-sky-400">
@@ -1109,7 +1142,7 @@ export function AdminDashboard() {
                         <td className="p-4">
                           <StatusBadge status={user.status} />
                         </td>
-                        <td className="p-4">
+                        <td className="p-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-2">
                             {user.kycStatus !== 'VERIFIED' && (
                               <button
@@ -1233,6 +1266,161 @@ export function AdminDashboard() {
             Từ chối KYC
           </Button>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={detailUserId !== null}
+        onClose={closeUserDetail}
+        title={
+          <span className="inline-flex items-center gap-2">
+            <UserCircle className="h-5 w-5 text-sky-400" />
+            Chi tiết người dùng
+          </span>
+        }
+        description={userDetail?.user.email || 'Đang tải hồ sơ, ví và điểm rủi ro AI'}
+        size="xl"
+      >
+        {detailLoading && (
+          <p className="py-8 text-center text-sm text-slate-400">Đang tải chi tiết...</p>
+        )}
+
+        {!detailLoading && userDetail && (
+          <div className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-[--color-border] bg-slate-900/50 p-4">
+                <p className="mb-1 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Họ tên</p>
+                <p className="font-bold text-white">{userDetail.user.fullName}</p>
+                <p className="mt-2 text-sm text-slate-400">{userDetail.user.phone}</p>
+              </div>
+              <div className="rounded-xl border border-[--color-border] bg-slate-900/50 p-4">
+                <p className="mb-2 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Trạng thái</p>
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge status={userDetail.user.kycStatus} />
+                  <StatusBadge status={userDetail.user.status} />
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Tạo: {new Date(userDetail.user.createdAt).toLocaleString('vi-VN')}
+                </p>
+              </div>
+            </div>
+
+            {(() => {
+              const risk = userDetail.riskScore;
+              const level = risk?.level || 'SAFE';
+              const tone =
+                level === 'HIGH'
+                  ? 'text-rose-400 border-rose-500/30 bg-rose-500/10'
+                  : level === 'MEDIUM'
+                    ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+                    : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
+              return (
+                <div className={cn('rounded-xl border p-4', tone)}>
+                  <div className="mb-2 flex items-center gap-2">
+                    {level === 'SAFE' ? <ShieldCheck className="h-4 w-4" /> : <ShieldAlert className="h-4 w-4" />}
+                    <p className="text-sm font-bold">Điểm rủi ro AI</p>
+                  </div>
+                  {risk?.available === false ? (
+                    <p className="text-xs text-slate-400">{risk.error || 'AI chưa sẵn sàng'}</p>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-black">
+                        {fmtNumber(risk?.score ?? 0, 1)}
+                        <span className="text-sm font-bold text-slate-400">/100</span>
+                        <span className="ml-2 text-sm font-bold">{risk?.label || level}</span>
+                      </p>
+                      {(risk?.factors ?? []).slice(0, 3).map((f, i) => (
+                        <p key={i} className="mt-1 text-[11px] text-slate-400">
+                          • {f}
+                        </p>
+                      ))}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div>
+              <p className="mb-2 text-sm font-bold text-white">Ví Fiat</p>
+              {userDetail.accounts.length === 0 ? (
+                <p className="text-xs text-slate-500">Chưa có ví</p>
+              ) : (
+                <div className="space-y-2">
+                  {userDetail.accounts.map((acc) => (
+                    <div
+                      key={acc.id}
+                      className="flex items-center justify-between rounded-xl border border-[--color-border] bg-slate-900/40 px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-mono text-sm text-slate-300">{acc.accountNumber}</p>
+                        <p className="text-[11px] text-slate-500">
+                          {acc.currency} · {acc.accountType} · {acc.status}
+                        </p>
+                      </div>
+                      <p className="font-black text-emerald-400">{fmtVnd(acc.balance)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm font-bold text-white">Giao dịch gần đây</p>
+              {userDetail.recentTransactions.length === 0 ? (
+                <p className="text-xs text-slate-500">Chưa có giao dịch</p>
+              ) : (
+                <div className="max-h-48 overflow-y-auto rounded-xl border border-[--color-border]">
+                  <table className="w-full border-collapse text-sm">
+                    <tbody className="divide-y divide-slate-800/60">
+                      {userDetail.recentTransactions.map((tx) => (
+                        <tr key={tx.id}>
+                          <td className="px-3 py-2">
+                            <TxTypeBadge type={tx.transactionType} />
+                          </td>
+                          <td className="px-3 py-2 text-slate-400">
+                            {tx.description || tx.referenceNumber}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <TxAmount tx={tx} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2 border-t border-[--color-border] pt-4">
+              <Button
+                variant="secondary"
+                fullWidth={false}
+                onClick={() => {
+                  const u = userDetail.user;
+                  closeUserDetail();
+                  handleToggleLock(u);
+                }}
+                className={
+                  userDetail.user.status === 'LOCKED'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                    : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                }
+              >
+                {userDetail.user.status === 'LOCKED' ? (
+                  <>
+                    <Unlock className="h-4 w-4" /> Mở khoá
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-4 w-4" /> Khoá tài khoản
+                  </>
+                )}
+              </Button>
+              <Button variant="secondary" fullWidth={false} onClick={closeUserDetail}>
+                Đóng
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

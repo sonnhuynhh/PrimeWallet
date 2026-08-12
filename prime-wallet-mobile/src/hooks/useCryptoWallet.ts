@@ -58,14 +58,38 @@ export function useCryptoWallet() {
       balance: String(bal?.balanceEth ?? "0"),
       isNative: true,
     };
-    const erc20: TokenBalance[] = tokens.map((t) => ({
-      contractAddress: t.contractAddress,
-      symbol: t.symbol,
-      name: t.name,
-      decimals: t.decimals,
-      balance: "0",
-    }));
-    return [native, ...erc20.filter((t) => !t.isNative)];
+
+    const balanceByContract = new Map<string, string>();
+    for (const t of bal?.tokens ?? []) {
+      if (!t?.contractAddress || t.isNative) continue;
+      balanceByContract.set(t.contractAddress.toLowerCase(), String(t.balance ?? "0"));
+    }
+
+    const erc20: TokenBalance[] = tokens
+      .filter((t) => t.contractAddress)
+      .map((t) => ({
+        contractAddress: t.contractAddress,
+        symbol: t.symbol,
+        name: t.name,
+        decimals: t.decimals,
+        balance: balanceByContract.get(t.contractAddress!.toLowerCase()) ?? "0",
+      }));
+
+    // Token có số dư từ backend nhưng không nằm trong danh sách supported
+    for (const t of bal?.tokens ?? []) {
+      if (!t?.contractAddress || t.isNative) continue;
+      const key = t.contractAddress.toLowerCase();
+      if (erc20.some((x) => x.contractAddress?.toLowerCase() === key)) continue;
+      erc20.push({
+        contractAddress: t.contractAddress,
+        symbol: t.symbol,
+        name: t.name ?? t.symbol,
+        decimals: t.decimals ?? 18,
+        balance: String(t.balance ?? "0"),
+      });
+    }
+
+    return [native, ...erc20];
   };
 
   const refreshWalletData = async (wallet: CryptoWallet, nets = networks) => {

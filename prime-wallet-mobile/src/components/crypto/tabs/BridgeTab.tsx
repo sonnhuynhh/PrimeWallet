@@ -22,7 +22,7 @@ import {
   type BridgeQuote,
   type BridgeRates,
 } from "../../../services/bridge";
-import type { TokenInfo } from "../../../services/crypto";
+import type { TokenBalance } from "../../../types/crypto";
 import { shellTheme } from "../../../theme/tokens";
 
 async function waitForReceipt(rpcUrl: string, hash: string) {
@@ -48,13 +48,15 @@ export function BridgeTab() {
 
   const nativeSymbol = balance?.nativeSymbol ?? "ETH";
   const selectable = useMemo(() => {
-    const erc20 = tokens.filter((t: TokenInfo) => t.symbol !== nativeSymbol);
-    return [nativeSymbol, ...erc20.map((t: TokenInfo) => t.symbol)];
+    const erc20 = tokens.filter((t: TokenBalance) => t.symbol !== nativeSymbol && !t.isNative);
+    return [nativeSymbol, ...erc20.map((t: TokenBalance) => t.symbol)];
   }, [nativeSymbol, tokens]);
-  const selectedToken = tokens.find((t: TokenInfo) => t.symbol === symbol);
+  const selectedToken = tokens.find((t: TokenBalance) => t.symbol === symbol);
   const isNative = symbol === nativeSymbol;
   const decimals = isNative ? 18 : (selectedToken?.decimals ?? 18);
-  const available = isNative ? String(balance?.balanceEth ?? "0") : "0";
+  const available = isNative
+    ? String(balance?.balanceEth ?? "0")
+    : String(selectedToken?.balance ?? "0");
 
   useEffect(() => {
     if (!activeWallet) return;

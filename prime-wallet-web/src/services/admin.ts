@@ -133,3 +133,18 @@ export async function getAdminFraudReport(minLevel: FraudRiskLevel = "SAFE", lim
 export async function getAdminUserRiskScore(userId: string) {
   return request<import("./ai").AiRiskScoreData>(`/api/v1/admin/users/${userId}/risk-score`);
 }
+
+export type AdminUserDetail = {
+  user: AdminUserResponse;
+  accounts: import("../types/api").AccountResponse[];
+  recentTransactions: import("../types/api").TransactionResponse[];
+  riskScore?: import("./ai").AiRiskScoreData | null;
+};
+
+export async function getAdminUserDetail(userId: string) {
+  return request<AdminUserDetail>(`/api/v1/admin/users/${userId}/detail`);
+}
+
+export async function getAdminUserAccounts(userId: string) {
+  return request<import("../types/api").AccountResponse[]>(`/api/v1/admin/users/${userId}/accounts`);
+}

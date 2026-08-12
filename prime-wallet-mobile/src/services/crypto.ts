@@ -25,6 +25,15 @@ export type WalletBalance = {
   balanceEth: string | number;
   balanceWei: string;
   nativeSymbol?: string;
+  tokens?: Array<{
+    contractAddress?: string | null;
+    symbol: string;
+    name?: string;
+    decimals?: number;
+    balance?: string | number;
+    rawBalance?: string;
+    isNative?: boolean;
+  }>;
 };
 
 export type TokenInfo = {

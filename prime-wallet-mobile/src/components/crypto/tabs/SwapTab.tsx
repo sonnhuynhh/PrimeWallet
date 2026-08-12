@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ethers } from "ethers";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -17,12 +17,12 @@ import { useCrypto } from "../../../context/CryptoContext";
 import {
   DEFAULT_SLIPPAGE_BPS,
   SLIPPAGE_PRESETS_BPS,
-  SEPOLIA_TOKENS,
   isSwapSupported,
   needsSwapApproval,
   buildApproveCalldata,
   isNativeAddress,
   feeLabel,
+  tokensForChain,
   type DexToken,
 } from "../../../lib/dex";
 import { shellTheme } from "../../../theme/tokens";
@@ -30,12 +30,21 @@ import { shellTheme } from "../../../theme/tokens";
 export function SwapTab() {
   const theme = shellTheme.crypto;
   const { chainId, address, activeNetwork, signAndSend } = useCrypto();
-  const tokens = useMemo<DexToken[]>(() => SEPOLIA_TOKENS, []);
-  const [tokenIn, setTokenIn] = useState<DexToken>(tokens[0]);
-  const [tokenOut, setTokenOut] = useState<DexToken>(tokens[2]);
+  const tokens = useMemo<DexToken[]>(() => tokensForChain(chainId), [chainId]);
+  const [tokenIn, setTokenIn] = useState<DexToken>(() => tokensForChain(chainId)[0]);
+  const [tokenOut, setTokenOut] = useState<DexToken>(() => {
+    const list = tokensForChain(chainId);
+    return list[2] ?? list[1];
+  });
   const [amountText, setAmountText] = useState("");
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setTokenIn(tokens[0]);
+    setTokenOut(tokens[2] ?? tokens[1]);
+    setAmountText("");
+  }, [tokens]);
 
   const supported = isSwapSupported(chainId);
   const amountIn = useMemo(() => {

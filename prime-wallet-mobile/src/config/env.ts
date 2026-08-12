@@ -11,14 +11,10 @@ const envUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 const BACKEND_PORT = process.env.EXPO_PUBLIC_BACKEND_PORT ?? "8080";
 
 function devDefaultForPlatform(): string {
-  if (Platform.OS === "android") {
-    // Android Emulator: 10.0.2.2 = localhost của máy host
-    const isEmulator =
-      !Constants.isDevice ||
-      Constants.executionEnvironment === "storeClient";
-    if (isEmulator || __DEV__) {
-      return `http://10.0.2.2:${BACKEND_PORT}`;
-    }
+  // Android Emulator: 10.0.2.2 = localhost của máy host
+  // Chỉ dùng khi chắc chắn là emulator — thiết bị thật cần EXPO_PUBLIC_API_BASE_URL
+  if (Platform.OS === "android" && !Constants.isDevice) {
+    return `http://10.0.2.2:${BACKEND_PORT}`;
   }
 
   if (Platform.OS === "ios" && !Constants.isDevice) {

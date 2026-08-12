@@ -1,6 +1,7 @@
 package com.sonnhuynhh.primewallet.auth.service;
 
 import com.sonnhuynhh.primewallet.auth.dto.AdminStatsResponse;
+import com.sonnhuynhh.primewallet.auth.dto.AdminUserDetailResponse;
 import com.sonnhuynhh.primewallet.auth.dto.AdminUserResponse;
 import com.sonnhuynhh.primewallet.auth.dto.UpdateKycRequest;
 import com.sonnhuynhh.primewallet.auth.entity.User;
@@ -8,7 +9,9 @@ import com.sonnhuynhh.primewallet.auth.repository.UserRepository;
 import com.sonnhuynhh.primewallet.ai.service.AiInsightService;
 import com.sonnhuynhh.primewallet.common.exception.ResourceNotFoundException;
 import com.sonnhuynhh.primewallet.common.service.AuditService;
+import com.sonnhuynhh.primewallet.wallet.dto.AccountResponse;
 import com.sonnhuynhh.primewallet.wallet.dto.TransactionResponse;
+import com.sonnhuynhh.primewallet.wallet.entity.Account;
 import com.sonnhuynhh.primewallet.wallet.entity.Transaction;
 import com.sonnhuynhh.primewallet.wallet.enums.TransactionStatus;
 import com.sonnhuynhh.primewallet.wallet.enums.TransactionType;
@@ -114,6 +117,51 @@ public class AdminService {
         // Đảm bảo user tồn tại trước khi hỏi AI
         getUserById(userId);
         return aiInsightService.getRiskScore(userId.toString());
+    }
+
+    /**
+     * Danh sách ví Fiat của user (đọc số dư từ DB).
+     */
+    @Transactional(readOnly = true)
+    public List<AccountResponse> getUserAccounts(UUID userId) {
+        getUserById(userId);
+        return accountRepository.findByUserId(userId).stream()
+                .map(this::toAccountResponse)
+                .toList();
+    }
+
+    /**
+     * Chi tiết user: hồ sơ + ví + giao dịch gần đây + risk AI.
+     */
+    @Transactional(readOnly = true)
+    public AdminUserDetailResponse getUserDetail(UUID userId) {
+        AdminUserResponse user = getUserById(userId);
+        List<AccountResponse> accounts = accountRepository.findByUserId(userId).stream()
+                .map(this::toAccountResponse)
+                .toList();
+        List<TransactionResponse> recent = transactionRepository
+                .findByUserId(userId, Pageable.ofSize(15))
+                .map(this::toTransactionResponse)
+                .getContent();
+        Map<String, Object> risk = aiInsightService.getRiskScore(userId.toString());
+        return AdminUserDetailResponse.builder()
+                .user(user)
+                .accounts(accounts)
+                .recentTransactions(recent)
+                .riskScore(risk)
+                .build();
+    }
+
+    private AccountResponse toAccountResponse(Account account) {
+        return AccountResponse.builder()
+                .id(account.getId())
+                .accountNumber(account.getAccountNumber())
+                .currency(account.getCurrency())
+                .balance(account.getBalance())
+                .status(account.getStatus() != null ? account.getStatus().name() : null)
+                .accountType(account.getAccountType())
+                .createdAt(account.getCreatedAt())
+                .build();
     }
 
     // ==================== AUDIT LOGS ====================

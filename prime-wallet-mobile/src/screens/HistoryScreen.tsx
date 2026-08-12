@@ -6,6 +6,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { EmptyState } from "../components/ui/EmptyState";
+import { toastErr } from "../components/feedback/toast";
 import { useAuth } from "../context/AuthContext";
 import { getTransactionHistory } from "../services/wallet";
 import { getLinkedWallets, getWalletHistory, type EtherscanTransaction } from "../services/crypto";
@@ -15,9 +16,19 @@ import { fetchOnChainTransactions, normalizeEtherscanResult } from "../lib/oncha
 import { ETHERSCAN_API_KEY } from "../config/env";
 import type { TransactionResponse } from "../types/api";
 
+function safeFormatEther(value: string | undefined): string {
+  try {
+    if (!value) return "0";
+    return ethers.formatEther(value);
+  } catch {
+    return "0";
+  }
+}
+
 export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
-  const { session, activeWalletMode } = useAuth();
-  const mode = embedded ? "crypto" : activeWalletMode;
+  const { session } = useAuth();
+  // Fiat shell không truyền embedded → luôn fiat
+  const mode = embedded ? "crypto" : "fiat";
 
   const [fiatItems, setFiatItems] = useState<TransactionResponse[]>([]);
   const [fiatLoading, setFiatLoading] = useState(true);
@@ -28,6 +39,7 @@ export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => {
     if (mode === "fiat") void loadFiatHistory();
     if (mode === "crypto") void loadCryptoHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, session?.account?.id]);
 
   const loadFiatHistory = async () => {
@@ -40,6 +52,9 @@ export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
     try {
       const page = await getTransactionHistory(accountId);
       setFiatItems(page.content);
+    } catch (e) {
+      toastErr(e, "Không tải được lịch sử fiat");
+      setFiatItems([]);
     } finally {
       setFiatLoading(false);
     }
@@ -64,14 +79,13 @@ export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
         }
         setCryptoItems(rows);
       }
+    } catch (e) {
+      toastErr(e, "Không tải được lịch sử crypto");
+      setCryptoItems([]);
     } finally {
       setCryptoLoading(false);
     }
   };
-
-  if (!mode) {
-    return <EmptyState icon="history" title="Chưa chọn ví" description="Chọn loại ví để xem lịch sử." />;
-  }
 
   if (mode === "fiat") {
     if (fiatLoading) return <ActivityIndicator color="#21c95e" className="mt-8" />;
@@ -122,18 +136,20 @@ export function HistoryScreen({ embedded }: { embedded?: boolean } = {}) {
       scrollEnabled={!embedded}
       contentContainerStyle={{ gap: 10, paddingBottom: 24, flexGrow: 1 }}
       renderItem={({ item }) => {
-        const ethValue = ethers.formatEther(item.value);
+        const ethValue = safeFormatEther(item.value);
         const sym = nativeSymbolOf(network);
         const date = new Date(parseInt(item.timeStamp, 10) * 1000).toLocaleString("vi-VN");
         return (
           <TouchableOpacity onPress={() => Linking.openURL(txExplorerUrl(network, item.hash))}>
             <Card className="gap-2">
               <View className="flex-row items-center justify-between">
-                <Text className="font-bold text-white">Chuyển ETH</Text>
+                <Text className="font-bold text-white">Chuyển {sym}</Text>
                 <MaterialCommunityIcons name="open-in-new" size={16} color="#9b9b9b" />
               </View>
               <Text className="text-xs text-muted-foreground">{date}</Text>
-              <Text className="font-extrabold text-primary">{ethValue} {sym}</Text>
+              <Text className="font-extrabold text-primary">
+                {ethValue} {sym}
+              </Text>
             </Card>
           </TouchableOpacity>
         );

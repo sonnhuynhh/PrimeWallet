@@ -30,10 +30,12 @@ import { request, setOnAuthFailure } from "../src/services/http";
 import { clearTokens, saveTokens } from "../src/storage/tokenStore";
 
 function jsonResponse(body: unknown, status = 200): Response {
+  const text = JSON.stringify(body);
   return {
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
+    text: async () => text,
   } as unknown as Response;
 }
 

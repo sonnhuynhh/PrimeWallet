@@ -12,16 +12,14 @@ import { TokenChipRow } from "../TokenChipRow";
 import { toastErr, toastOk } from "../../feedback/toast";
 import { clampDecimals, fmtNumber } from "../../../lib/utils";
 import { useCrypto } from "../../../context/CryptoContext";
-import { estimateGas, sendTransaction } from "../../../services/crypto";
-import { getPrivateKey } from "../../../storage/secureKeyStore";
-import { rpcOf } from "../../../lib/chains";
+import { estimateGas, recordTransaction } from "../../../services/crypto";
 import type { TokenBalance } from "../../../types/crypto";
 import type { EstimateGasData } from "../../../types/crypto";
 import { shellTheme } from "../../../theme/tokens";
 
 export function SendTab() {
   const theme = shellTheme.crypto;
-  const { activeWallet, activeNetwork, balance, tokenRows, loadBalance } = useCrypto();
+  const { activeWallet, balance, tokenRows, loadBalance, signAndSend } = useCrypto();
   const [token, setToken] = useState<TokenBalance | null>(null);
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -72,45 +70,44 @@ export function SendTab() {
     if (!addressValid || !amountValid || !selected) return;
     setSending(true);
     try {
-      const pk = await getPrivateKey();
-      if (!pk) throw new Error("Không tìm thấy khóa ví");
+      const safeAmount = clampDecimals(amount, decimals);
+      let hash: string;
 
-      const provider = new ethers.JsonRpcProvider(rpcOf(activeWallet.blockchainNetwork, activeNetwork?.rpcUrl));
-      const wallet = new ethers.Wallet(pk, provider);
-
-      let signed: string;
       if (isNative) {
-        const tx = await wallet.populateTransaction({
+        hash = await signAndSend({
           to: to.trim(),
-          value: ethers.parseEther(clampDecimals(amount, decimals)),
+          value: ethers.parseEther(safeAmount),
           gasLimit: gas ? BigInt(gas.gasLimit) : undefined,
         });
-        signed = await wallet.signTransaction(tx);
       } else {
         const iface = new ethers.Interface(["function transfer(address to, uint256 value) returns (bool)"]);
         const data = iface.encodeFunctionData("transfer", [
           to.trim(),
-          ethers.parseUnits(clampDecimals(amount, decimals), decimals),
+          ethers.parseUnits(safeAmount, decimals),
         ]);
-        const tx = await wallet.populateTransaction({
+        hash = await signAndSend({
           to: selected.contractAddress!,
           data,
           gasLimit: gas ? BigInt(gas.gasLimit) : undefined,
         });
-        signed = await wallet.signTransaction(tx);
       }
 
-      const result = await sendTransaction({
-        blockchainNetwork: activeWallet.blockchainNetwork,
-        signedTransactionHex: signed,
-        fromAddress: activeWallet.walletAddress,
-        toAddress: to.trim(),
-        amount,
-        symbol,
-        tokenAddress: selected.contractAddress,
-      });
+      try {
+        await recordTransaction({
+          blockchainNetwork: activeWallet.blockchainNetwork,
+          transactionHash: hash,
+          fromAddress: activeWallet.walletAddress,
+          toAddress: to.trim(),
+          amount: safeAmount,
+          symbol,
+          tokenAddress: selected.contractAddress,
+          type: "SEND",
+        });
+      } catch {
+        // Broadcast đã thành công — ghi lịch sử in-app thất bại không chặn UX
+      }
 
-      toastOk("Gửi thành công", result.transactionHash.slice(0, 14) + "…");
+      toastOk("Gửi thành công", hash.slice(0, 14) + "…");
       setTo("");
       setAmount("");
       setGas(null);
@@ -127,7 +124,7 @@ export function SendTab() {
       <Card className="gap-4">
         <CardHeader
           title="Gửi crypto"
-          description="Ký offline · broadcast qua backend"
+          description="Ký offline · broadcast qua backend / WalletConnect"
           icon={<MaterialCommunityIcons name="arrow-up-bold" size={20} color={theme.primary} />}
         />
 
